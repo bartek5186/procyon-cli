@@ -39,6 +39,7 @@ Implemented:
 
 ```bash
 go run . init
+go run . module create invoice
 ```
 
 Non-interactive example:
@@ -60,12 +61,24 @@ The `init` command:
 - optionally removes Docker files or the example `hello` feature,
 - prepares the generated project for normal `go run . -migrate=true` startup.
 
-## Planned Scope
+## Module Generator
 
-This CLI is also the right place for future project-level commands, for example:
+Run this command inside a generated Procyon project:
 
 ```bash
 procyon-cli module create invoice
 ```
 
-Module generation should live here rather than inside the backend template, so the generated application does not carry scaffolding tooling as runtime source code.
+The module name must be `snake_case` and start with a letter:
+
+```bash
+procyon-cli module create order_item
+```
+
+The generator creates model, store, service, controller, MySQL migration, and PostgreSQL migration files. It also wires the module into `AppStore`, `AppService`, `application`, routes, auto-migration, and default Casbin policies.
+
+Existing generated files are not overwritten by default. Use `--force` to overwrite generated module files:
+
+```bash
+procyon-cli module create invoice --force
+```
