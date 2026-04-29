@@ -77,7 +77,7 @@ procyon-cli module create order_item
 
 The generator creates model, store, service, controller, MySQL migration, and PostgreSQL migration files. It also wires the module into `AppStore`, `AppService`, `application`, routes, auto-migration, and default Casbin policies.
 
-Existing generated files are not overwritten by default. Use `--force` to overwrite generated module files:
+The command fails if the module already exists or is already wired into the project. Existing generated files are not overwritten by default. Use `--force` to overwrite generated module files only when creating a module that is not wired yet:
 
 ```bash
 procyon-cli module create invoice --force

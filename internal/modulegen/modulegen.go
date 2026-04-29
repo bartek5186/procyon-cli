@@ -52,17 +52,11 @@ func Run(opts Options) error {
 		MigStamp: time.Now().UTC().Format("20060102150405"),
 	}
 
-	files := map[string]string{
-		"models/" + spec.Name + "_inputs.go":                                               inputsFile(spec),
-		"models/" + spec.Name + "_outputs.go":                                              outputsFile(spec),
-		"models/" + spec.Name + "_models.go":                                               modelFile(spec),
-		"models/" + spec.Name + "_mappers.go":                                              mapperFile(spec),
-		"store/" + spec.Field + "Store.go":                                                 storeFile(spec),
-		"services/" + spec.Field + "Service.go":                                            serviceFile(spec),
-		"controllers/" + spec.Field + "Controller.go":                                      controllerFile(spec),
-		"internal/migrations/mysql/" + spec.MigStamp + "_create_" + spec.Table + ".sql":    mysqlMigration(spec),
-		"internal/migrations/postgres/" + spec.MigStamp + "_create_" + spec.Table + ".sql": postgresMigration(spec),
+	if err := validateModuleDoesNotExist(spec); err != nil {
+		return err
 	}
+
+	files := generatedFiles(spec)
 
 	for path, body := range files {
 		if err := writeGenerated(path, body, spec.Force); err != nil {
@@ -86,6 +80,87 @@ func Run(opts Options) error {
 	fmt.Printf("generated and wired module %s\n", spec.Name)
 	fmt.Printf("routes: POST /v1%s, GET /v1%s/:id\n", spec.Route, spec.Route)
 	fmt.Println("next: review migrations, then run gofmt/go test")
+	return nil
+}
+
+func generatedFiles(spec moduleSpec) map[string]string {
+	return map[string]string{
+		"models/" + spec.Name + "_inputs.go":                                               inputsFile(spec),
+		"models/" + spec.Name + "_outputs.go":                                              outputsFile(spec),
+		"models/" + spec.Name + "_models.go":                                               modelFile(spec),
+		"models/" + spec.Name + "_mappers.go":                                              mapperFile(spec),
+		"store/" + spec.Field + "Store.go":                                                 storeFile(spec),
+		"services/" + spec.Field + "Service.go":                                            serviceFile(spec),
+		"controllers/" + spec.Field + "Controller.go":                                      controllerFile(spec),
+		"internal/migrations/mysql/" + spec.MigStamp + "_create_" + spec.Table + ".sql":    mysqlMigration(spec),
+		"internal/migrations/postgres/" + spec.MigStamp + "_create_" + spec.Table + ".sql": postgresMigration(spec),
+	}
+}
+
+func validateModuleDoesNotExist(spec moduleSpec) error {
+	var hits []string
+
+	for path := range generatedFiles(spec) {
+		if strings.Contains(path, spec.MigStamp) {
+			continue
+		}
+		if fileExists(path) {
+			hits = append(hits, path)
+		}
+	}
+
+	migrationPatterns := []string{
+		filepath.Join("internal", "migrations", "mysql", "*_create_"+spec.Table+".sql"),
+		filepath.Join("internal", "migrations", "postgres", "*_create_"+spec.Table+".sql"),
+	}
+	for _, pattern := range migrationPatterns {
+		matches, err := filepath.Glob(pattern)
+		if err != nil {
+			return err
+		}
+		hits = append(hits, matches...)
+	}
+
+	codeChecks := map[string][]string{
+		"store/appStore.go": {
+			"func (s *AppStore) " + spec.Pascal + "() *" + spec.Pascal + "Store",
+			spec.Field + " *" + spec.Pascal + "Store",
+		},
+		"services/appService.go": {
+			spec.Pascal + " *" + spec.Pascal + "Service",
+		},
+		"app.go": {
+			spec.Field + " *controllers." + spec.Pascal + "Controller",
+		},
+		"routes.go": {
+			"secured.Group(\"" + spec.Route + "\")",
+			"app.rbac.Require(\"" + spec.Name + "\",",
+		},
+		"internal/migrate.go": {
+			"&models." + spec.Pascal + "{},",
+		},
+		"internal/authz/casbin.go": {
+			"{RoleUser, \"" + spec.Name + "\", \"read\"}",
+			"{RoleAdmin, \"" + spec.Name + "\", \"manage\"}",
+		},
+	}
+	for path, needles := range codeChecks {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		src := string(data)
+		for _, needle := range needles {
+			if strings.Contains(src, needle) {
+				hits = append(hits, path)
+				break
+			}
+		}
+	}
+
+	if len(hits) > 0 {
+		return fmt.Errorf("module %q already exists or is already wired: %s", spec.Name, strings.Join(uniqueStrings(hits), ", "))
+	}
 	return nil
 }
 
@@ -124,6 +199,27 @@ func readGoModule() (string, error) {
 		}
 	}
 	return "", errors.New("unable to read module path from go.mod")
+}
+
+func fileExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
+}
+
+func uniqueStrings(values []string) []string {
+	if len(values) == 0 {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(values))
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		out = append(out, value)
+	}
+	return out
 }
 
 func writeGenerated(path, body string, force bool) error {
