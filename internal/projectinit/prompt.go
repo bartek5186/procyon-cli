@@ -1,4 +1,4 @@
-package templateinit
+package projectinit
 
 import (
 	"bufio"

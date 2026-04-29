@@ -1,4 +1,4 @@
-package templateinit
+package projectinit
 
 import (
 	"bufio"
@@ -15,6 +15,7 @@ import (
 )
 
 const templateModule = "github.com/bartek5186/procyon"
+const templateRepoURL = "https://github.com/bartek5186/procyon"
 
 var skipDirs = map[string]struct{}{
 	".git":        {},
@@ -41,10 +42,11 @@ func Run(opts Options) error {
 		return err
 	}
 
-	sourceDir, err := findTemplateRoot(wd)
+	sourceDir, cleanup, err := resolveTemplateSource(wd)
 	if err != nil {
 		return err
 	}
+	defer cleanup()
 
 	if err := prepareOutputDir(opts.OutputDir, opts.Force); err != nil {
 		return err
@@ -86,14 +88,6 @@ func completeOptions(opts Options, wd string, in io.Reader, out io.Writer) (Opti
 			{Value: "mysql", Label: "MySQL"},
 		})
 	}
-	if opts.Auth == "" {
-		opts.Auth = promptChoice(reader, out, "Auth", []choice{
-			{Value: "kratos-casbin", Label: "Kratos + Casbin"},
-			{Value: "kratos", Label: "Kratos only"},
-			{Value: "admin", Label: "Admin key only"},
-			{Value: "none", Label: "None"},
-		})
-	}
 
 	opts.OutputDir = filepath.Clean(opts.OutputDir)
 	return opts, nil
@@ -111,21 +105,39 @@ func validateOptions(opts Options) error {
 	default:
 		return fmt.Errorf("unsupported database %q", opts.Database)
 	}
-	switch opts.Auth {
-	case "kratos-casbin", "kratos", "admin", "none":
-	default:
-		return fmt.Errorf("unsupported auth mode %q", opts.Auth)
-	}
 	return nil
+}
+
+func resolveTemplateSource(wd string) (string, func(), error) {
+	if sourceDir, err := findTemplateRoot(wd); err == nil {
+		return sourceDir, func() {}, nil
+	}
+
+	tmpDir, err := os.MkdirTemp("", "procyon-template-*")
+	if err != nil {
+		return "", nil, err
+	}
+	cleanup := func() {
+		_ = os.RemoveAll(tmpDir)
+	}
+
+	cmd := exec.Command("git", "clone", "--depth=1", templateRepoURL, tmpDir)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		cleanup()
+		return "", nil, fmt.Errorf("clone template from %s: %w: %s", templateRepoURL, err, strings.TrimSpace(string(out)))
+	}
+	if !isTemplateRoot(tmpDir) {
+		cleanup()
+		return "", nil, fmt.Errorf("cloned repository %s does not look like a Procyon template", templateRepoURL)
+	}
+
+	return tmpDir, cleanup, nil
 }
 
 func findTemplateRoot(wd string) (string, error) {
 	dir := wd
 	for {
-		if fileExists(filepath.Join(dir, "go.mod")) &&
-			fileExists(filepath.Join(dir, "main.go")) &&
-			fileExists(filepath.Join(dir, "internal", "config.go")) &&
-			fileExists(filepath.Join(dir, "config", "config.example.json")) {
+		if isTemplateRoot(dir) {
 			return dir, nil
 		}
 		parent := filepath.Dir(dir)
@@ -134,6 +146,13 @@ func findTemplateRoot(wd string) (string, error) {
 		}
 		dir = parent
 	}
+}
+
+func isTemplateRoot(dir string) bool {
+	return fileExists(filepath.Join(dir, "go.mod")) &&
+		fileExists(filepath.Join(dir, "main.go")) &&
+		fileExists(filepath.Join(dir, "internal", "config.go")) &&
+		fileExists(filepath.Join(dir, "config", "config.example.json"))
 }
 
 func prepareOutputDir(out string, force bool) error {
@@ -177,7 +196,7 @@ func copyTemplate(source, dest string, opts Options) error {
 			if _, ok := skipDirs[name]; ok {
 				return filepath.SkipDir
 			}
-			if rel == "cmd" || rel == "internal/templateinit" {
+			if rel == "internal/projectinit" {
 				return filepath.SkipDir
 			}
 			if !opts.IncludeDocker && (rel == "docker" || rel == ".github") {
@@ -320,10 +339,14 @@ func rewriteConfigFile(path string, opts Options) error {
 
 	cfg["app_name"] = opts.Name
 	cfg["auth_domain"] = "http://127.0.0.1:4433"
-	cfg["auth"] = authConfig(opts.Auth)
-	cfg["rbac"] = map[string]any{"enabled": opts.Auth == "kratos-casbin"}
+	cfg["auth"] = map[string]any{
+		"enabled":  true,
+		"provider": "kratos",
+		"domain":   "http://127.0.0.1:4433",
+	}
+	cfg["rbac"] = map[string]any{"enabled": true}
 	cfg["admin"] = map[string]any{
-		"enabled":    opts.Auth == "kratos-casbin" || opts.Auth == "admin",
+		"enabled":    true,
 		"secret_key": "CHANGE_ME_ADMIN_KEY",
 	}
 
@@ -369,23 +392,6 @@ func rewriteConfigFile(path string, opts Options) error {
 	}
 	out = append(out, '\n')
 	return os.WriteFile(path, out, 0o644)
-}
-
-func authConfig(mode string) map[string]any {
-	switch mode {
-	case "kratos-casbin", "kratos":
-		return map[string]any{
-			"enabled":  true,
-			"provider": "kratos",
-			"domain":   "http://127.0.0.1:4433",
-		}
-	default:
-		return map[string]any{
-			"enabled":  false,
-			"provider": "kratos",
-			"domain":   "",
-		}
-	}
 }
 
 func runGofmt(root string) error {
