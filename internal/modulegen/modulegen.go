@@ -57,9 +57,9 @@ func Run(opts Options) error {
 		"models/" + spec.Name + "_outputs.go":                                              outputsFile(spec),
 		"models/" + spec.Name + "_models.go":                                               modelFile(spec),
 		"models/" + spec.Name + "_mappers.go":                                              mapperFile(spec),
-		"store/" + spec.Name + "_store.go":                                                 storeFile(spec),
-		"services/" + spec.Name + "_service.go":                                            serviceFile(spec),
-		"controllers/" + spec.Name + "_controller.go":                                      controllerFile(spec),
+		"store/" + spec.Field + "Store.go":                                                 storeFile(spec),
+		"services/" + spec.Field + "Service.go":                                            serviceFile(spec),
+		"controllers/" + spec.Field + "Controller.go":                                      controllerFile(spec),
 		"internal/migrations/mysql/" + spec.MigStamp + "_create_" + spec.Table + ".sql":    mysqlMigration(spec),
 		"internal/migrations/postgres/" + spec.MigStamp + "_create_" + spec.Table + ".sql": postgresMigration(spec),
 	}
