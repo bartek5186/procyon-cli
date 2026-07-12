@@ -178,6 +178,10 @@ func removeGoFunction(src, signature string) (string, error) {
 }
 
 func completeOptions(opts Options, wd string, in io.Reader, out io.Writer) (Options, error) {
+	if needsInteractiveInput(opts) && isInteractiveTerminal(in, out) {
+		return completeOptionsTUI(opts, wd)
+	}
+
 	reader := bufio.NewReader(in)
 
 	if opts.Name == "" {
@@ -187,7 +191,7 @@ func completeOptions(opts Options, wd string, in io.Reader, out io.Writer) (Opti
 		opts.Module = prompt(reader, out, "Go module", "github.com/acme/"+slug(opts.Name))
 	}
 	if opts.OutputDir == "" {
-		opts.OutputDir = prompt(reader, out, "Output directory", "../"+slug(opts.Name))
+		opts.OutputDir = prompt(reader, out, "Output directory", "./"+slug(opts.Name))
 	}
 	if opts.Database == "" {
 		opts.Database = promptChoice(reader, out, "Database", []choice{
@@ -202,8 +206,35 @@ func completeOptions(opts Options, wd string, in io.Reader, out io.Writer) (Opti
 		opts.Auth = "kratos-casbin"
 	}
 
-	opts.OutputDir = filepath.Clean(opts.OutputDir)
+	opts.OutputDir = cleanOutputDir(opts.OutputDir)
 	return opts, nil
+}
+
+func needsInteractiveInput(opts Options) bool {
+	return opts.Name == "" || opts.Module == "" || opts.OutputDir == "" || opts.Database == ""
+}
+
+func isInteractiveTerminal(in io.Reader, out io.Writer) bool {
+	inFile, inOK := in.(*os.File)
+	outFile, outOK := out.(*os.File)
+	if !inOK || !outOK {
+		return false
+	}
+	inInfo, inErr := inFile.Stat()
+	outInfo, outErr := outFile.Stat()
+	return inErr == nil && outErr == nil &&
+		inInfo.Mode()&os.ModeCharDevice != 0 &&
+		outInfo.Mode()&os.ModeCharDevice != 0
+}
+
+func cleanOutputDir(value string) string {
+	value = strings.TrimSpace(value)
+	hadCurrentPrefix := strings.HasPrefix(value, "."+string(filepath.Separator))
+	cleaned := filepath.Clean(value)
+	if hadCurrentPrefix && cleaned != "." && !filepath.IsAbs(cleaned) {
+		return "." + string(filepath.Separator) + cleaned
+	}
+	return cleaned
 }
 
 func validateOptions(opts Options) error {

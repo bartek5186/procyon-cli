@@ -33,6 +33,19 @@ After that, the CLI can be used from any directory:
 procyon-cli init
 ```
 
+When required flags are omitted in a terminal, `init` opens an interactive TUI
+with text fields, database and auth selectors, Docker/hello toggles, and a final
+summary. New projects default to `./<project-name>` below the current directory.
+
+Set `ACCESSIBLE=1` to use the screen-reader-friendly prompt rendering:
+
+```bash
+ACCESSIBLE=1 procyon-cli init
+```
+
+Supplying all required flags keeps the command non-interactive for scripts and
+CI.
+
 ## Current Scope
 
 Implemented:

@@ -1,12 +1,31 @@
 package projectinit
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
 )
+
+func TestTextPromptsDefaultOutputToCurrentDirectory(t *testing.T) {
+	input := bytes.NewBufferString("demo-api\n\n\n1\n")
+	var output bytes.Buffer
+	opts, err := completeOptions(Options{}, "/tmp/work", input, &output)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if opts.OutputDir != "./demo-api" {
+		t.Fatalf("OutputDir = %q, want ./demo-api", opts.OutputDir)
+	}
+}
+
+func TestCleanOutputDirPreservesCurrentDirectoryPrefix(t *testing.T) {
+	if got := cleanOutputDir("./demo-api"); got != "./demo-api" {
+		t.Fatalf("cleanOutputDir returned %q", got)
+	}
+}
 
 func TestReplaceTextFilesKeepsCoreModuleAndRewritesTemplateModule(t *testing.T) {
 	root := t.TempDir()
