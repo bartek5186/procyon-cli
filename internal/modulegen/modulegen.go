@@ -133,15 +133,15 @@ func validateModuleDoesNotExist(spec moduleSpec) error {
 			spec.Field + " *controllers." + spec.Pascal + "Controller",
 		},
 		"routes.go": {
-			"secured.Group(\"" + spec.Route + "\")",
+			"api.Group(\"" + spec.Route + "\")",
 			"app.rbac.Require(\"" + spec.Name + "\",",
 		},
 		"internal/migrate.go": {
 			"&models." + spec.Pascal + "{},",
 		},
-		"internal/authz/casbin.go": {
-			"{RoleUser, \"" + spec.Name + "\", \"read\"}",
-			"{RoleAdmin, \"" + spec.Name + "\", \"manage\"}",
+		"policies.go": {
+			"Object: \"" + spec.Name + "\", Action: \"read\"",
+			"Object: \"" + spec.Name + "\", Action: \"manage\"",
 		},
 	}
 	for path, needles := range codeChecks {
@@ -172,7 +172,7 @@ func validateProcyonProject() error {
 		"store/appStore.go",
 		"services/appService.go",
 		"internal/migrate.go",
-		"internal/authz/casbin.go",
+		"policies.go",
 	}
 	for _, path := range required {
 		if _, err := os.Stat(path); err != nil {
@@ -248,21 +248,24 @@ func wireStore(s moduleSpec) error {
 	path := "store/appStore.go"
 	return updateGoFile(path, func(src string) (string, error) {
 		var err error
-		src, err = insertInBlock(src, "type Datastore interface {", "\t"+s.Pascal+"() *"+s.Pascal+"Store")
+		src, err = insertAfter(src, "\t// procyon:module-store-interface", "\t"+s.Pascal+"() *"+s.Pascal+"Store")
 		if err != nil {
 			return "", err
 		}
-		src, err = insertInBlock(src, "type AppStore struct {", "\t"+s.Field+" *"+s.Pascal+"Store")
+		src, err = insertAfter(src, "\t// procyon:module-store-fields", "\t"+s.Field+" *"+s.Pascal+"Store")
 		if err != nil {
 			return "", err
 		}
-		src, err = insertAfter(src, "\t\thello:  NewHelloStore(db),", "\t\t"+s.Field+": New"+s.Pascal+"Store(db),")
+		src, err = insertAfter(src, "\t\t// procyon:module-store-init", "\t\t"+s.Field+": New"+s.Pascal+"Store(db),")
 		if err != nil {
 			return "", err
 		}
 		method := "\nfunc (s *AppStore) " + s.Pascal + "() *" + s.Pascal + "Store {\n\treturn s." + s.Field + "\n}\n"
 		if !strings.Contains(src, "func (s *AppStore) "+s.Pascal+"() *"+s.Pascal+"Store") {
-			src += method
+			src, err = insertAfter(src, "// procyon:module-store-methods", method)
+			if err != nil {
+				return "", err
+			}
 		}
 		return src, nil
 	})
@@ -272,11 +275,11 @@ func wireService(s moduleSpec) error {
 	path := "services/appService.go"
 	return updateGoFile(path, func(src string) (string, error) {
 		var err error
-		src, err = insertInBlock(src, "type AppService struct {", "\t"+s.Pascal+" *"+s.Pascal+"Service")
+		src, err = insertAfter(src, "\t// procyon:module-service-fields", "\t"+s.Pascal+" *"+s.Pascal+"Service")
 		if err != nil {
 			return "", err
 		}
-		src, err = insertAfter(src, "\t\tHello:   NewHelloService(store, logger, metrics),", "\t\t"+s.Pascal+": New"+s.Pascal+"Service(store, logger),")
+		src, err = insertAfter(src, "\t\t// procyon:module-service-init", "\t\t"+s.Pascal+": New"+s.Pascal+"Service(store, logger),")
 		if err != nil {
 			return "", err
 		}
@@ -288,11 +291,15 @@ func wireApp(s moduleSpec) error {
 	path := "app.go"
 	return updateGoFile(path, func(src string) (string, error) {
 		var err error
-		src, err = insertInBlock(src, "type application struct {", "\t"+s.Field+" *controllers."+s.Pascal+"Controller")
+		src, err = ensureImport(src, s.Module+"/controllers")
 		if err != nil {
 			return "", err
 		}
-		src, err = insertAfter(src, "\t\thello:      controllers.NewHelloController(appService, logger.GetLogger()),", "\t\t"+s.Field+": controllers.New"+s.Pascal+"Controller(appService, logger.GetLogger()),")
+		src, err = insertAfter(src, "\t// procyon:module-controller-fields", "\t"+s.Field+" *controllers."+s.Pascal+"Controller")
+		if err != nil {
+			return "", err
+		}
+		src, err = insertAfter(src, "\t\t// procyon:module-controller-init", "\t\t"+s.Field+": controllers.New"+s.Pascal+"Controller(appService, logger.GetLogger()),")
 		if err != nil {
 			return "", err
 		}
@@ -303,29 +310,38 @@ func wireApp(s moduleSpec) error {
 func wireRoutes(s moduleSpec) error {
 	path := "routes.go"
 	return updateGoFile(path, func(src string) (string, error) {
-		line := "\n\t" + s.Field + " := secured.Group(\"" + s.Route + "\")\n" +
-			"\t" + s.Field + ".POST(\"\", app." + s.Field + ".Create, app.rbac.Require(\"" + s.Name + "\", \"manage\"))\n" +
-			"\t" + s.Field + ".GET(\"/:id\", app." + s.Field + ".GetByID, app.rbac.Require(\"" + s.Name + "\", \"read\"))"
-		return insertAfter(src, "\tsecuredAdmin.GET(\"/hello\", app.hello.HelloAdmin)", line)
+		line := "\n\t" + s.Field + " := api.Group(\"" + s.Route + "\")\n" +
+			"\t" + s.Field + ".POST(\"\", app." + s.Field + ".Create, app.requirePermission(\"*\", \"" + s.Name + "\", \"manage\"))\n" +
+			"\t" + s.Field + ".GET(\"/:id\", app." + s.Field + ".GetByID, app.requirePermission(\"*\", \"" + s.Name + "\", \"read\"))"
+		return insertAfter(src, "\t// procyon:api-routes", line)
 	})
 }
 
 func wireAutoMigrate(s moduleSpec) error {
 	path := "internal/migrate.go"
 	return updateGoFile(path, func(src string) (string, error) {
-		return insertAfter(src, "\t\t&models.HelloMessage{},", "\t\t&models."+s.Pascal+"{},")
+		var err error
+		src, err = ensureImport(src, s.Module+"/models")
+		if err != nil {
+			return "", err
+		}
+		return insertAfter(src, "\t\t// procyon:module-models", "\t\t&models."+s.Pascal+"{},")
 	})
 }
 
 func wirePolicies(s moduleSpec) error {
-	path := "internal/authz/casbin.go"
+	path := "policies.go"
 	return updateGoFile(path, func(src string) (string, error) {
 		var err error
-		src, err = insertAfter(src, "\t{RoleUser, \"hello\", \"read\"},", "\t{RoleUser, \""+s.Name+"\", \"read\"},")
+		src, err = insertAfter(src,
+			"\t// procyon:module-user-policies",
+			"\t{Role: authz.RoleUser, Domain: \"*\", Object: \""+s.Name+"\", Action: \"read\"},")
 		if err != nil {
 			return "", err
 		}
-		return insertAfter(src, "\t{RoleAdmin, \"hello\", \"manage\"},", "\t{RoleAdmin, \""+s.Name+"\", \"manage\"},")
+		return insertAfter(src,
+			"\t// procyon:module-admin-policies",
+			"\t{Role: authz.RoleAdmin, Domain: \"*\", Object: \""+s.Name+"\", Action: \"manage\"},")
 	})
 }
 
@@ -352,23 +368,6 @@ func updateGoFile(path string, fn func(string) (string, error)) error {
 	return nil
 }
 
-func insertInBlock(src, start, line string) (string, error) {
-	if strings.Contains(src, line) {
-		return src, nil
-	}
-	idx := strings.Index(src, start)
-	if idx < 0 {
-		return "", fmt.Errorf("marker not found: %s", start)
-	}
-	blockStart := idx + len(start)
-	end := strings.Index(src[blockStart:], "\n}")
-	if end < 0 {
-		return "", fmt.Errorf("end of block not found: %s", start)
-	}
-	insertAt := blockStart + end
-	return src[:insertAt] + "\n" + line + src[insertAt:], nil
-}
-
 func insertAfter(src, marker, line string) (string, error) {
 	if strings.Contains(src, line) {
 		return src, nil
@@ -379,6 +378,20 @@ func insertAfter(src, marker, line string) (string, error) {
 	}
 	insertAt := idx + len(marker)
 	return src[:insertAt] + "\n" + line + src[insertAt:], nil
+}
+
+func ensureImport(src, importPath string) (string, error) {
+	quoted := "\"" + importPath + "\""
+	if strings.Contains(src, quoted) {
+		return src, nil
+	}
+	marker := "import ("
+	idx := strings.Index(src, marker)
+	if idx < 0 {
+		return "", fmt.Errorf("import block not found")
+	}
+	insertAt := idx + len(marker)
+	return src[:insertAt] + "\n\t" + quoted + src[insertAt:], nil
 }
 
 func inputsFile(s moduleSpec) string {
@@ -513,7 +526,7 @@ import (
 	"net/http"
 	"strconv"
 
-	"%[1]s/internal/apierr"
+	"github.com/bartek5186/procyon-core/apierr"
 	"%[1]s/models"
 	"%[1]s/services"
 	"github.com/labstack/echo/v4"

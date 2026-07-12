@@ -12,10 +12,17 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+
+	"github.com/bartek5186/procyon-cli/internal/buildinfo"
 )
 
 const templateModule = "github.com/bartek5186/procyon"
 const templateRepoURL = "https://github.com/bartek5186/procyon"
+const coreModule = "github.com/bartek5186/procyon-core"
+const coreModulePlaceholder = "__PROCYON_CORE_MODULE__"
+const templateModulePlaceholder = "__PROCYON_TEMPLATE_MODULE__"
+const generatorMarker = "procyon:"
+const generatorMarkerPlaceholder = "__PROCYON_GENERATOR_MARKER__"
 
 var skipDirs = map[string]struct{}{
 	".git":        {},
@@ -42,7 +49,7 @@ func Run(opts Options) error {
 		return err
 	}
 
-	sourceDir, cleanup, err := resolveTemplateSource(wd)
+	sourceDir, cleanup, err := resolveTemplateSource(wd, opts.TemplateVersion)
 	if err != nil {
 		return err
 	}
@@ -55,7 +62,15 @@ func Run(opts Options) error {
 	if err := copyTemplate(sourceDir, opts.OutputDir, opts); err != nil {
 		return err
 	}
+	if !opts.IncludeHello {
+		if err := removeHelloWiring(opts.OutputDir); err != nil {
+			return err
+		}
+	}
 	if err := rewriteProject(opts.OutputDir, opts); err != nil {
+		return err
+	}
+	if err := writeProjectMetadata(opts.OutputDir, opts); err != nil {
 		return err
 	}
 	if err := runGofmt(opts.OutputDir); err != nil {
@@ -68,6 +83,98 @@ func Run(opts Options) error {
 	fmt.Fprintf(os.Stdout, "  go run . -migrate=true\n")
 
 	return nil
+}
+
+func removeHelloWiring(root string) error {
+	lineRemovals := map[string][]string{
+		"app.go": {
+			"/controllers\"",
+			"hello *controllers.HelloController",
+			"hello: controllers.NewHelloController",
+		},
+		"routes.go": {
+			"app.hello.",
+			"securedAdmin :=",
+		},
+		"store/appStore.go": {
+			"Hello() *HelloStore",
+			"hello *HelloStore",
+			"hello: NewHelloStore",
+		},
+		"services/appService.go": {
+			"Hello",
+		},
+		"internal/migrate.go": {
+			"/models\"",
+			"&models.HelloMessage{}",
+		},
+		"policies.go": {
+			"Object: \"hello\"",
+		},
+	}
+
+	for rel, needles := range lineRemovals {
+		path := filepath.Join(root, rel)
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		next := string(raw)
+		if rel == "store/appStore.go" {
+			next, err = removeGoFunction(next, "func (s *AppStore) Hello()")
+			if err != nil {
+				return err
+			}
+		}
+		lines := strings.Split(next, "\n")
+		out := lines[:0]
+		for _, line := range lines {
+			remove := false
+			for _, needle := range needles {
+				if strings.Contains(line, needle) {
+					remove = true
+					break
+				}
+			}
+			if !remove {
+				out = append(out, line)
+			}
+		}
+		next = strings.Join(out, "\n")
+		if err := os.WriteFile(path, []byte(next), 0o644); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func removeGoFunction(src, signature string) (string, error) {
+	start := strings.Index(src, signature)
+	if start < 0 {
+		return "", fmt.Errorf("optional hello wiring marker not found: %s", signature)
+	}
+	bodyStart := strings.Index(src[start:], "{")
+	if bodyStart < 0 {
+		return "", fmt.Errorf("function body not found: %s", signature)
+	}
+	bodyStart += start
+	depth := 0
+	for i := bodyStart; i < len(src); i++ {
+		switch src[i] {
+		case '{':
+			depth++
+		case '}':
+			depth--
+			if depth == 0 {
+				end := i + 1
+				for end < len(src) && (src[end] == '\n' || src[end] == '\r') {
+					end++
+				}
+				return src[:start] + src[end:], nil
+			}
+		}
+	}
+	return "", fmt.Errorf("unterminated function: %s", signature)
 }
 
 func completeOptions(opts Options, wd string, in io.Reader, out io.Writer) (Options, error) {
@@ -88,6 +195,12 @@ func completeOptions(opts Options, wd string, in io.Reader, out io.Writer) (Opti
 			{Value: "mysql", Label: "MySQL"},
 		})
 	}
+	if opts.TemplateVersion == "" {
+		opts.TemplateVersion = buildinfo.TemplateVersion
+	}
+	if opts.Auth == "" {
+		opts.Auth = "kratos-casbin"
+	}
 
 	opts.OutputDir = filepath.Clean(opts.OutputDir)
 	return opts, nil
@@ -105,10 +218,15 @@ func validateOptions(opts Options) error {
 	default:
 		return fmt.Errorf("unsupported database %q", opts.Database)
 	}
+	switch opts.Auth {
+	case "kratos-casbin", "kratos", "admin", "none":
+	default:
+		return fmt.Errorf("unsupported auth mode %q", opts.Auth)
+	}
 	return nil
 }
 
-func resolveTemplateSource(wd string) (string, func(), error) {
+func resolveTemplateSource(wd, templateVersion string) (string, func(), error) {
 	if sourceDir, err := findTemplateRoot(wd); err == nil {
 		return sourceDir, func() {}, nil
 	}
@@ -121,7 +239,12 @@ func resolveTemplateSource(wd string) (string, func(), error) {
 		_ = os.RemoveAll(tmpDir)
 	}
 
-	cmd := exec.Command("git", "clone", "--depth=1", templateRepoURL, tmpDir)
+	args := []string{"clone", "--depth=1"}
+	if strings.TrimSpace(templateVersion) != "" {
+		args = append(args, "--branch", templateVersion)
+	}
+	args = append(args, templateRepoURL, tmpDir)
+	cmd := exec.Command("git", args...)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		cleanup()
 		return "", nil, fmt.Errorf("clone template from %s: %w: %s", templateRepoURL, err, strings.TrimSpace(string(out)))
@@ -132,6 +255,30 @@ func resolveTemplateSource(wd string) (string, func(), error) {
 	}
 
 	return tmpDir, cleanup, nil
+}
+
+type projectMetadata struct {
+	SchemaVersion   int    `json:"schema_version"`
+	ProjectModule   string `json:"project_module"`
+	TemplateVersion string `json:"template_version"`
+	CoreVersion     string `json:"core_version"`
+	CLIMinVersion   string `json:"cli_min_version"`
+}
+
+func writeProjectMetadata(root string, opts Options) error {
+	metadata := projectMetadata{
+		SchemaVersion:   1,
+		ProjectModule:   opts.Module,
+		TemplateVersion: opts.TemplateVersion,
+		CoreVersion:     buildinfo.CoreVersion,
+		CLIMinVersion:   buildinfo.CLIVersion,
+	}
+	raw, err := json.MarshalIndent(metadata, "", "  ")
+	if err != nil {
+		return err
+	}
+	raw = append(raw, '\n')
+	return os.WriteFile(filepath.Join(root, ".procyon.json"), raw, 0o644)
 }
 
 func findTemplateRoot(wd string) (string, error) {
@@ -151,7 +298,8 @@ func findTemplateRoot(wd string) (string, error) {
 func isTemplateRoot(dir string) bool {
 	return fileExists(filepath.Join(dir, "go.mod")) &&
 		fileExists(filepath.Join(dir, "main.go")) &&
-		fileExists(filepath.Join(dir, "internal", "config.go")) &&
+		fileExists(filepath.Join(dir, "app.go")) &&
+		fileExists(filepath.Join(dir, "policies.go")) &&
 		fileExists(filepath.Join(dir, "config", "config.example.json"))
 }
 
@@ -267,13 +415,12 @@ func copyFile(src, dst string, mode fs.FileMode) error {
 
 func rewriteProject(root string, opts Options) error {
 	replacements := map[string]string{
-		templateModule:          opts.Module,
-		"github.com/bartek5186": moduleParent(opts.Module),
-		"Procyon":               opts.Name,
-		"procyon-server":        slug(opts.Name),
-		"procyon-api":           slug(opts.Name) + "-api",
-		"procyon-mysql":         slug(opts.Name) + "-mysql",
-		"procyon":               slug(opts.Name),
+		templateModule:   opts.Module,
+		"Procyon":        opts.Name,
+		"procyon-server": slug(opts.Name),
+		"procyon-api":    slug(opts.Name) + "-api",
+		"procyon-mysql":  slug(opts.Name) + "-mysql",
+		"procyon":        slug(opts.Name),
 	}
 
 	if err := replaceTextFiles(root, replacements); err != nil {
@@ -314,10 +461,15 @@ func replaceTextFiles(root string, replacements map[string]string) error {
 		if err != nil {
 			return err
 		}
-		text := string(raw)
+		text := strings.ReplaceAll(string(raw), coreModule, coreModulePlaceholder)
+		text = strings.ReplaceAll(text, templateModule, templateModulePlaceholder)
+		text = strings.ReplaceAll(text, generatorMarker, generatorMarkerPlaceholder)
 		for old, next := range replacements {
 			text = strings.ReplaceAll(text, old, next)
 		}
+		text = strings.ReplaceAll(text, templateModulePlaceholder, replacements[templateModule])
+		text = strings.ReplaceAll(text, coreModulePlaceholder, coreModule)
+		text = strings.ReplaceAll(text, generatorMarkerPlaceholder, generatorMarker)
 		return os.WriteFile(path, []byte(text), 0o644)
 	})
 }
@@ -339,14 +491,17 @@ func rewriteConfigFile(path string, opts Options) error {
 
 	cfg["app_name"] = opts.Name
 	cfg["auth_domain"] = "http://127.0.0.1:4433"
+	authEnabled := opts.Auth == "kratos-casbin" || opts.Auth == "kratos"
+	rbacEnabled := opts.Auth == "kratos-casbin"
+	adminEnabled := opts.Auth != "none"
 	cfg["auth"] = map[string]any{
-		"enabled":  true,
+		"enabled":  authEnabled,
 		"provider": "kratos",
 		"domain":   "http://127.0.0.1:4433",
 	}
-	cfg["rbac"] = map[string]any{"enabled": true}
+	cfg["rbac"] = map[string]any{"enabled": rbacEnabled}
 	cfg["admin"] = map[string]any{
-		"enabled":    true,
+		"enabled":    adminEnabled,
 		"secret_key": "CHANGE_ME_ADMIN_KEY",
 	}
 
@@ -434,12 +589,4 @@ func slug(value string) string {
 		return "app"
 	}
 	return out
-}
-
-func moduleParent(module string) string {
-	i := strings.LastIndex(module, "/")
-	if i == -1 {
-		return module
-	}
-	return module[:i]
 }
