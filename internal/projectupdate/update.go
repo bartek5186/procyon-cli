@@ -71,11 +71,12 @@ func Run(opts Options) error {
 }
 
 type projectMetadata struct {
-	SchemaVersion   int    `json:"schema_version"`
-	ProjectModule   string `json:"project_module"`
-	TemplateVersion string `json:"template_version"`
-	CoreVersion     string `json:"core_version"`
-	CLIMinVersion   string `json:"cli_min_version"`
+	SchemaVersion   int                        `json:"schema_version"`
+	ProjectModule   string                     `json:"project_module"`
+	TemplateVersion string                     `json:"template_version"`
+	CoreVersion     string                     `json:"core_version"`
+	CLIMinVersion   string                     `json:"cli_min_version"`
+	Modules         map[string]json.RawMessage `json:"modules,omitempty"`
 }
 
 func validateProject() (*projectMetadata, error) {

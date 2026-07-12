@@ -4,9 +4,11 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/bartek5186/procyon-cli/internal/buildinfo"
 	"github.com/bartek5186/procyon-cli/internal/modulegen"
+	"github.com/bartek5186/procyon-cli/internal/moduleinstall"
 	"github.com/bartek5186/procyon-cli/internal/projectinit"
 	"github.com/bartek5186/procyon-cli/internal/projectupdate"
 )
@@ -37,20 +39,14 @@ func main() {
 			os.Exit(1)
 		}
 	case "module":
-		if len(os.Args) < 3 || os.Args[2] != "create" {
-			moduleUsage()
-			os.Exit(2)
+		runModuleCommand(os.Args[2:])
+	case "add":
+		if len(os.Args) >= 3 && os.Args[2] == "module" {
+			runModuleAdd(os.Args[3:])
+			return
 		}
-		opts, err := parseModuleCreateArgs(os.Args[3:])
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "procyon-cli module create: %v\n", err)
-			moduleUsage()
-			os.Exit(2)
-		}
-		if err := modulegen.Run(opts); err != nil {
-			fmt.Fprintf(os.Stderr, "procyon-cli module create: %v\n", err)
-			os.Exit(1)
-		}
+		usage()
+		os.Exit(2)
 	case "update":
 		updateCmd := flag.NewFlagSet("procyon-cli update", flag.ExitOnError)
 		opts := projectupdate.Options{}
@@ -90,17 +86,122 @@ func parseModuleCreateArgs(args []string) (modulegen.Options, error) {
 }
 
 func usage() {
-	fmt.Fprintf(os.Stderr, "usage:\n  procyon-cli init [flags]\n  procyon-cli module create <module_name> [--force]\n  procyon-cli update [--version v0.2.0] [--dry-run]\n\n")
+	fmt.Fprintf(os.Stderr, "usage:\n  procyon-cli init [flags]\n  procyon-cli module create <module_name> [--force]\n  procyon-cli module add <module_name> [flags]\n  procyon-cli module update <module_name> [flags]\n  procyon-cli module list\n  procyon-cli module info <module_name>\n  procyon-cli update [--version v0.2.0] [--dry-run]\n\n")
 	fmt.Fprintf(os.Stderr, "examples:\n")
 	fmt.Fprintf(os.Stderr, "  procyon-cli init\n")
 	fmt.Fprintf(os.Stderr, "  procyon-cli init --name przyjazne-server --module github.com/acme/przyjazne-server --db postgres --out ../przyjazne-v2\n")
 	fmt.Fprintf(os.Stderr, "  procyon-cli module create invoice\n")
+	fmt.Fprintf(os.Stderr, "  procyon-cli module add payment-system --provider stripe\n")
 	fmt.Fprintf(os.Stderr, "  procyon-cli update --version v0.2.0\n")
 }
 
 func moduleUsage() {
-	fmt.Fprintf(os.Stderr, "usage:\n  procyon-cli module create <module_name> [--force]\n\n")
+	fmt.Fprintf(os.Stderr, "usage:\n  procyon-cli module create <module_name> [--force]\n  procyon-cli module add <module_name> [--source path] [--registry path] [--provider names] [--published] [--dry-run]\n  procyon-cli module update <module_name> [--version version] [--source path] [--published] [--dry-run]\n  procyon-cli module list\n  procyon-cli module info <module_name>\n\n")
 	fmt.Fprintf(os.Stderr, "examples:\n")
 	fmt.Fprintf(os.Stderr, "  procyon-cli module create invoice\n")
 	fmt.Fprintf(os.Stderr, "  procyon-cli module create order_item --force\n")
+	fmt.Fprintf(os.Stderr, "  procyon-cli module add example --dry-run\n")
+	fmt.Fprintf(os.Stderr, "  procyon-cli module add payment-system --provider stripe\n")
+	fmt.Fprintf(os.Stderr, "  procyon-cli module update payment-system\n")
+}
+
+func runModuleCommand(args []string) {
+	if len(args) == 0 {
+		moduleUsage()
+		os.Exit(2)
+	}
+	switch args[0] {
+	case "create":
+		opts, err := parseModuleCreateArgs(args[1:])
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "procyon-cli module create: %v\n", err)
+			os.Exit(2)
+		}
+		if err := modulegen.Run(opts); err != nil {
+			fmt.Fprintf(os.Stderr, "procyon-cli module create: %v\n", err)
+			os.Exit(1)
+		}
+	case "add":
+		runModuleAdd(args[1:])
+	case "update":
+		runModuleUpdate(args[1:])
+	case "list":
+		if err := moduleinstall.List(os.Stdout); err != nil {
+			fmt.Fprintf(os.Stderr, "procyon-cli module list: %v\n", err)
+			os.Exit(1)
+		}
+	case "info":
+		if len(args) != 2 {
+			moduleUsage()
+			os.Exit(2)
+		}
+		if err := moduleinstall.Info(args[1], os.Stdout); err != nil {
+			fmt.Fprintf(os.Stderr, "procyon-cli module info: %v\n", err)
+			os.Exit(1)
+		}
+	default:
+		moduleUsage()
+		os.Exit(2)
+	}
+}
+
+func runModuleUpdate(args []string) {
+	if len(args) == 0 || strings.HasPrefix(args[0], "-") {
+		moduleUsage()
+		os.Exit(2)
+	}
+	opts := moduleinstall.UpdateOptions{Name: args[0], Version: "latest"}
+	flags := flag.NewFlagSet("procyon-cli module update", flag.ExitOnError)
+	flags.StringVar(&opts.Version, "version", "latest", "Plugin version available in the selected source")
+	flags.StringVar(&opts.Source, "source", "", "Module source directory (defaults to the installed source)")
+	flags.BoolVar(&opts.DryRun, "dry-run", false, "Show the update plan without changing files")
+	flags.BoolVar(&opts.Published, "published", false, "Update from a published Go module and remove the local replace")
+	_ = flags.Parse(args[1:])
+	if flags.NArg() != 0 {
+		fmt.Fprintf(os.Stderr, "procyon-cli module update: unexpected arguments: %s\n", strings.Join(flags.Args(), " "))
+		os.Exit(2)
+	}
+	if err := moduleinstall.Update(opts); err != nil {
+		fmt.Fprintf(os.Stderr, "procyon-cli module update: %v\n", err)
+		os.Exit(1)
+	}
+}
+
+func runModuleAdd(args []string) {
+	if len(args) == 0 || strings.HasPrefix(args[0], "-") {
+		moduleUsage()
+		os.Exit(2)
+	}
+	opts := moduleinstall.Options{Name: args[0], Values: map[string]string{}}
+	flags := flag.NewFlagSet("procyon-cli module add", flag.ExitOnError)
+	flags.StringVar(&opts.Source, "source", "", "Module source directory")
+	flags.StringVar(&opts.Registry, "registry", "", "Module registry JSON path")
+	flags.StringVar(&opts.Provider, "provider", "", "Comma-separated provider selection")
+	flags.BoolVar(&opts.DryRun, "dry-run", false, "Show the installation plan without changing files")
+	flags.BoolVar(&opts.Published, "published", false, "Use the published Go module instead of a local replace")
+	values := keyValueFlags(opts.Values)
+	flags.Var(values, "set", "Module value in key=value form (repeatable)")
+	_ = flags.Parse(args[1:])
+	if flags.NArg() != 0 {
+		fmt.Fprintf(os.Stderr, "procyon-cli module add: unexpected arguments: %s\n", strings.Join(flags.Args(), " "))
+		os.Exit(2)
+	}
+	if err := moduleinstall.Run(opts); err != nil {
+		fmt.Fprintf(os.Stderr, "procyon-cli module add: %v\n", err)
+		os.Exit(1)
+	}
+}
+
+type keyValueFlags map[string]string
+
+func (values keyValueFlags) String() string { return "" }
+
+func (values keyValueFlags) Set(raw string) error {
+	key, value, ok := strings.Cut(raw, "=")
+	key = strings.TrimSpace(key)
+	if !ok || key == "" {
+		return fmt.Errorf("expected key=value, got %q", raw)
+	}
+	values[key] = value
+	return nil
 }
