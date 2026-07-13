@@ -1,12 +1,14 @@
 package main
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"os"
 	"strings"
 
 	"github.com/bartek5186/procyon-cli/internal/buildinfo"
+	"github.com/bartek5186/procyon-cli/internal/dashboard"
 	"github.com/bartek5186/procyon-cli/internal/modulegen"
 	"github.com/bartek5186/procyon-cli/internal/moduleinstall"
 	"github.com/bartek5186/procyon-cli/internal/projectinit"
@@ -15,8 +17,15 @@ import (
 
 func main() {
 	if len(os.Args) < 2 {
-		usage()
-		os.Exit(2)
+		if err := dashboard.Run(); err != nil {
+			if errors.Is(err, dashboard.ErrNonInteractive) {
+				usage()
+				os.Exit(2)
+			}
+			fmt.Fprintf(os.Stderr, "procyon-cli: %v\n", err)
+			os.Exit(1)
+		}
+		return
 	}
 
 	switch os.Args[1] {
@@ -86,17 +95,17 @@ func parseModuleCreateArgs(args []string) (modulegen.Options, error) {
 }
 
 func usage() {
-	fmt.Fprintf(os.Stderr, "usage:\n  procyon-cli init [flags]\n  procyon-cli module create <module_name> [--force]\n  procyon-cli module add <module_name> [flags]\n  procyon-cli module update <module_name> [flags]\n  procyon-cli module list\n  procyon-cli module info <module_name>\n  procyon-cli update [--version v0.2.0] [--dry-run]\n\n")
+	fmt.Fprintf(os.Stderr, "usage:\n  procyon-cli init [flags]\n  procyon-cli module create <module_name> [--force]\n  procyon-cli module add <module_name> [flags]\n  procyon-cli module update <module_name> [flags]\n  procyon-cli module enable <module_name> [--dry-run]\n  procyon-cli module disable <module_name> [--dry-run]\n  procyon-cli module list\n  procyon-cli module info <module_name>\n  procyon-cli update [--version v0.3.0] [--dry-run]\n\n")
 	fmt.Fprintf(os.Stderr, "examples:\n")
 	fmt.Fprintf(os.Stderr, "  procyon-cli init\n")
 	fmt.Fprintf(os.Stderr, "  procyon-cli init --name przyjazne-server --module github.com/acme/przyjazne-server --db postgres --out ../przyjazne-v2\n")
 	fmt.Fprintf(os.Stderr, "  procyon-cli module create invoice\n")
 	fmt.Fprintf(os.Stderr, "  procyon-cli module add payment-system --provider stripe\n")
-	fmt.Fprintf(os.Stderr, "  procyon-cli update --version v0.2.0\n")
+	fmt.Fprintf(os.Stderr, "  procyon-cli update --version v0.3.0\n")
 }
 
 func moduleUsage() {
-	fmt.Fprintf(os.Stderr, "usage:\n  procyon-cli module create <module_name> [--force]\n  procyon-cli module add <module_name> [--source path] [--registry path] [--provider names] [--published] [--dry-run]\n  procyon-cli module update <module_name> [--version version] [--source path] [--published] [--dry-run]\n  procyon-cli module list\n  procyon-cli module info <module_name>\n\n")
+	fmt.Fprintf(os.Stderr, "usage:\n  procyon-cli module create <module_name> [--force]\n  procyon-cli module add <module_name> [--source path] [--registry path] [--provider names] [--published] [--dry-run]\n  procyon-cli module update <module_name> [--version version] [--source path] [--published] [--dry-run]\n  procyon-cli module enable <module_name> [--dry-run]\n  procyon-cli module disable <module_name> [--dry-run]\n  procyon-cli module list\n  procyon-cli module info <module_name>\n\n")
 	fmt.Fprintf(os.Stderr, "examples:\n")
 	fmt.Fprintf(os.Stderr, "  procyon-cli module create invoice\n")
 	fmt.Fprintf(os.Stderr, "  procyon-cli module create order_item --force\n")
@@ -125,6 +134,10 @@ func runModuleCommand(args []string) {
 		runModuleAdd(args[1:])
 	case "update":
 		runModuleUpdate(args[1:])
+	case "enable":
+		runModuleSetEnabled(args[1:], true)
+	case "disable":
+		runModuleSetEnabled(args[1:], false)
 	case "list":
 		if err := moduleinstall.List(os.Stdout); err != nil {
 			fmt.Fprintf(os.Stderr, "procyon-cli module list: %v\n", err)
@@ -142,6 +155,27 @@ func runModuleCommand(args []string) {
 	default:
 		moduleUsage()
 		os.Exit(2)
+	}
+}
+
+func runModuleSetEnabled(args []string, enabled bool) {
+	command := map[bool]string{true: "enable", false: "disable"}[enabled]
+	if len(args) == 0 || strings.HasPrefix(args[0], "-") {
+		moduleUsage()
+		os.Exit(2)
+	}
+	flags := flag.NewFlagSet("procyon-cli module "+command, flag.ExitOnError)
+	dryRun := flags.Bool("dry-run", false, "Show the plan without changing files")
+	_ = flags.Parse(args[1:])
+	if flags.NArg() != 0 {
+		fmt.Fprintf(os.Stderr, "procyon-cli module %s: unexpected arguments: %s\n", command, strings.Join(flags.Args(), " "))
+		os.Exit(2)
+	}
+	if err := moduleinstall.SetEnabled(moduleinstall.SetEnabledOptions{
+		Name: args[0], Enabled: enabled, DryRun: *dryRun, Writer: os.Stdout,
+	}); err != nil {
+		fmt.Fprintf(os.Stderr, "procyon-cli module %s: %v\n", command, err)
+		os.Exit(1)
 	}
 }
 

@@ -7,11 +7,11 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"strconv"
 	"strings"
 
 	"github.com/bartek5186/procyon-cli/internal/buildinfo"
+	"github.com/bartek5186/procyon-cli/internal/gocommand"
 )
 
 const CoreModule = "github.com/bartek5186/procyon-core"
@@ -46,7 +46,7 @@ func Run(opts Options) error {
 		if opts.DryRun {
 			continue
 		}
-		cmd := exec.Command(args[0], args[1:]...)
+		cmd := gocommand.New(args[0], args[1:]...)
 		cmd.Stdout = opts.Writer
 		cmd.Stderr = opts.Writer
 		if err := cmd.Run(); err != nil {
@@ -116,7 +116,7 @@ func validateProject() (*projectMetadata, error) {
 }
 
 func installedCoreVersion() string {
-	cmd := exec.Command("go", "list", "-m", "-f={{.Version}}", CoreModule)
+	cmd := gocommand.New("go", "list", "-m", "-f={{.Version}}", CoreModule)
 	out, err := cmd.Output()
 	if err != nil {
 		return ""

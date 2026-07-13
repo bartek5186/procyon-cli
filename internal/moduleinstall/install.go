@@ -7,7 +7,6 @@ import (
 	"go/format"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -15,6 +14,7 @@ import (
 	"time"
 
 	"github.com/bartek5186/procyon-cli/internal/buildinfo"
+	"github.com/bartek5186/procyon-cli/internal/gocommand"
 )
 
 type Options struct {
@@ -38,15 +38,17 @@ type projectMetadata struct {
 }
 
 type InstalledModule struct {
-	Version     string            `json:"version"`
-	Kind        string            `json:"kind,omitempty"`
-	GoModule    string            `json:"go_module,omitempty"`
-	Package     string            `json:"package,omitempty"`
-	Factory     string            `json:"factory,omitempty"`
-	LocalSource string            `json:"local_source,omitempty"`
-	Providers   []string          `json:"providers,omitempty"`
-	Values      map[string]string `json:"values,omitempty"`
-	InstalledAt string            `json:"installed_at"`
+	Enabled     *bool                 `json:"enabled,omitempty"`
+	Version     string                `json:"version"`
+	Kind        string                `json:"kind,omitempty"`
+	GoModule    string                `json:"go_module,omitempty"`
+	Package     string                `json:"package,omitempty"`
+	Factory     string                `json:"factory,omitempty"`
+	LocalSource string                `json:"local_source,omitempty"`
+	Providers   []string              `json:"providers,omitempty"`
+	Values      map[string]string     `json:"values,omitempty"`
+	Environment []EnvironmentVariable `json:"environment,omitempty"`
+	InstalledAt string                `json:"installed_at"`
 }
 
 type backupFile struct {
@@ -56,7 +58,7 @@ type backupFile struct {
 }
 
 var runCommand = func(writer io.Writer, name string, args ...string) error {
-	cmd := exec.Command(name, args...)
+	cmd := gocommand.New(name, args...)
 	cmd.Stdout = writer
 	cmd.Stderr = writer
 	return cmd.Run()
@@ -79,11 +81,7 @@ func Run(opts Options) error {
 		return fmt.Errorf("module %q is already installed", name)
 	}
 
-	source, err := resolveSource(name, opts.Source, opts.Registry)
-	if err != nil {
-		return err
-	}
-	manifest, err := loadManifest(source)
+	source, manifest, err := resolveModule(name, opts.Source, opts.Registry, opts.Published)
 	if err != nil {
 		return err
 	}
@@ -107,6 +105,7 @@ func runGoPluginInstall(opts Options, source string, manifest Manifest, metadata
 		localSource = ""
 	}
 	metadata.Modules[manifest.Name] = InstalledModule{
+		Enabled:     boolPointer(true),
 		Version:     manifest.Version,
 		Kind:        manifest.Kind,
 		GoModule:    manifest.GoModule,
@@ -115,17 +114,13 @@ func runGoPluginInstall(opts Options, source string, manifest Manifest, metadata
 		LocalSource: localSource,
 		Providers:   providers,
 		Values:      cloneStringMap(opts.Values),
+		Environment: selectedEnvironment(manifest.Environment, providers),
 		InstalledAt: time.Now().UTC().Format(time.RFC3339),
 	}
-	generated, err := generatePluginsFile(metadata.Modules)
+	state, err := buildGeneratedProjectState(metadata)
 	if err != nil {
 		return err
 	}
-	metadataBody, err := json.MarshalIndent(metadata, "", "  ")
-	if err != nil {
-		return err
-	}
-	metadataBody = append(metadataBody, '\n')
 
 	fmt.Fprintf(opts.Writer, "%s Go plugin %s %s\n", map[bool]string{true: "Plan", false: "Install"}[opts.DryRun], manifest.Name, manifest.Version)
 	fmt.Fprintf(opts.Writer, "  require %s@%s\n", manifest.GoModule, normalizedGoVersion(manifest.Version))
@@ -133,20 +128,17 @@ func runGoPluginInstall(opts Options, source string, manifest Manifest, metadata
 		fmt.Fprintf(opts.Writer, "  replace %s => %s\n", manifest.GoModule, localSource)
 	}
 	fmt.Fprintln(opts.Writer, "  generate plugins_gen.go")
+	fmt.Fprintln(opts.Writer, "  compose config/plugins.generated.json and .env.example")
 	if opts.DryRun {
 		return nil
 	}
 
-	backup, err := backupPaths([]string{".procyon.json", "plugins_gen.go", "go.mod", "go.sum"})
+	backup, err := backupPaths(generatedProjectPaths("go.mod", "go.sum"))
 	if err != nil {
 		return err
 	}
 	rollback := func() { restoreBackup(backup) }
-	if err := os.WriteFile(".procyon.json", metadataBody, 0o644); err != nil {
-		rollback()
-		return err
-	}
-	if err := os.WriteFile("plugins_gen.go", generated, 0o644); err != nil {
+	if err := writeGeneratedProjectState(state); err != nil {
 		rollback()
 		return err
 	}
@@ -176,7 +168,7 @@ func runGoPluginInstall(opts Options, source string, manifest Manifest, metadata
 func generatePluginsFile(installed map[string]InstalledModule) ([]byte, error) {
 	names := make([]string, 0, len(installed))
 	for name, module := range installed {
-		if module.Kind == "go-plugin" {
+		if module.Kind == "go-plugin" && moduleEnabled(module) {
 			names = append(names, name)
 		}
 	}
@@ -196,7 +188,7 @@ func generatePluginsFile(installed map[string]InstalledModule) ([]byte, error) {
 	source.WriteString(")\n\nfunc installedPluginFactories() []coreplugins.Registration {\n\treturn []coreplugins.Registration{\n")
 	for index, name := range names {
 		module := installed[name]
-		defaultConfig, err := json.Marshal(map[string]any{"providers": module.Providers, "values": module.Values})
+		defaultConfig, err := json.Marshal(map[string]any{"providers": module.Providers, "values": nonNilStringMap(module.Values)})
 		if err != nil {
 			return nil, err
 		}

@@ -24,6 +24,16 @@ const templateModulePlaceholder = "__PROCYON_TEMPLATE_MODULE__"
 const generatorMarker = "procyon:"
 const generatorMarkerPlaceholder = "__PROCYON_GENERATOR_MARKER__"
 
+var frameworkTextPlaceholders = []struct {
+	text        string
+	placeholder string
+}{
+	{text: ".procyon.json", placeholder: "__PROCYON_PROJECT_METADATA_FILE__"},
+	{text: "procyon-cli", placeholder: "__PROCYON_CLI_NAME__"},
+	{text: "procyon-core", placeholder: "__PROCYON_CORE_NAME__"},
+	{text: "Procyon Core", placeholder: "__PROCYON_CORE_TITLE__"},
+}
+
 var skipDirs = map[string]struct{}{
 	".git":        {},
 	".gocache":    {},
@@ -495,12 +505,18 @@ func replaceTextFiles(root string, replacements map[string]string) error {
 		text := strings.ReplaceAll(string(raw), coreModule, coreModulePlaceholder)
 		text = strings.ReplaceAll(text, templateModule, templateModulePlaceholder)
 		text = strings.ReplaceAll(text, generatorMarker, generatorMarkerPlaceholder)
+		for _, protected := range frameworkTextPlaceholders {
+			text = strings.ReplaceAll(text, protected.text, protected.placeholder)
+		}
 		for old, next := range replacements {
 			text = strings.ReplaceAll(text, old, next)
 		}
 		text = strings.ReplaceAll(text, templateModulePlaceholder, replacements[templateModule])
 		text = strings.ReplaceAll(text, coreModulePlaceholder, coreModule)
 		text = strings.ReplaceAll(text, generatorMarkerPlaceholder, generatorMarker)
+		for _, protected := range frameworkTextPlaceholders {
+			text = strings.ReplaceAll(text, protected.placeholder, protected.text)
+		}
 		return os.WriteFile(path, []byte(text), 0o644)
 	})
 }

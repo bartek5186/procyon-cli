@@ -88,6 +88,57 @@ func TestRunDryRunDoesNotWriteFiles(t *testing.T) {
 	}
 }
 
+func TestDisableAndEnablePluginSynchronizesGeneratedState(t *testing.T) {
+	project, source := moduleInstallFixture(t)
+	withWorkingDirectory(t, project)
+	writeTestFile(t, filepath.Join(project, ".env.example"), "APP_ENV=development\n")
+
+	originalRunner := runCommand
+	runCommand = func(_ io.Writer, _ string, _ ...string) error { return nil }
+	t.Cleanup(func() { runCommand = originalRunner })
+
+	if err := Run(Options{Name: "example", Source: source, Provider: "stripe", Writer: &bytes.Buffer{}}); err != nil {
+		t.Fatal(err)
+	}
+	assertGeneratedPluginState(t, true)
+	if err := SetEnabled(SetEnabledOptions{Name: "example", Enabled: false, Writer: &bytes.Buffer{}}); err != nil {
+		t.Fatal(err)
+	}
+	assertGeneratedPluginState(t, false)
+	if err := SetEnabled(SetEnabledOptions{Name: "example", Enabled: true, Writer: &bytes.Buffer{}}); err != nil {
+		t.Fatal(err)
+	}
+	assertGeneratedPluginState(t, true)
+}
+
+func assertGeneratedPluginState(t *testing.T, enabled bool) {
+	t.Helper()
+	generated, err := os.ReadFile("plugins_gen.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	config, err := os.ReadFile(generatedPluginConfigPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	env, err := os.ReadFile(".env.example")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for label, present := range map[string]bool{
+		"registration": strings.Contains(string(generated), "github.com/acme/procyon-example"),
+		"config":       strings.Contains(string(config), `"example"`),
+		"environment":  strings.Contains(string(env), "EXAMPLE_TOKEN="),
+	} {
+		if present != enabled {
+			t.Fatalf("%s presence = %v, want %v\nplugins:\n%s\nconfig:\n%s\nenv:\n%s", label, present, enabled, generated, config, env)
+		}
+	}
+	if !strings.Contains(string(env), "APP_ENV=development") {
+		t.Fatal("application environment values were not preserved")
+	}
+}
+
 func moduleInstallFixture(t *testing.T) (string, string) {
 	t.Helper()
 	root := t.TempDir()
@@ -118,7 +169,11 @@ func moduleInstallFixture(t *testing.T) (string, string) {
   "go_module": "github.com/acme/procyon-example",
   "package": "github.com/acme/procyon-example",
   "factory": "New",
-  "providers": ["stripe"]
+  "providers": ["stripe"],
+  "environment": [
+    {"name":"EXAMPLE_TOKEN","description":"Example token.","providers":["stripe"],"secret":true},
+    {"name":"GOOGLE_ONLY","providers":["google"]}
+  ]
 }
 `)
 	writeTestFile(t, filepath.Join(source, "go.mod"), "module github.com/acme/procyon-example\n\ngo 1.26.0\n")

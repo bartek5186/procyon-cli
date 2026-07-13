@@ -27,11 +27,15 @@ func List(writer io.Writer) error {
 	sort.Strings(names)
 	for _, name := range names {
 		module := metadata.Modules[name]
+		status := "enabled"
+		if !moduleEnabled(module) {
+			status = "disabled"
+		}
 		providers := ""
 		if len(module.Providers) > 0 {
 			providers = " [" + strings.Join(module.Providers, ", ") + "]"
 		}
-		fmt.Fprintf(writer, "%s %s%s\n", name, module.Version, providers)
+		fmt.Fprintf(writer, "%s %s [%s]%s\n", name, module.Version, status, providers)
 	}
 	return nil
 }
@@ -49,6 +53,7 @@ func Info(name string, writer io.Writer) error {
 		return fmt.Errorf("module %q is not installed", name)
 	}
 	fmt.Fprintf(writer, "Name: %s\nVersion: %s\n", name, module.Version)
+	fmt.Fprintf(writer, "Status: %s\n", enabledLabel(moduleEnabled(module)))
 	if module.Kind != "" {
 		fmt.Fprintf(writer, "Kind: %s\n", module.Kind)
 	}

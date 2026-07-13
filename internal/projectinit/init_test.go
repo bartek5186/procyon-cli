@@ -55,6 +55,38 @@ func TestReplaceTextFilesKeepsCoreModuleAndRewritesTemplateModule(t *testing.T) 
 	}
 }
 
+func TestReplaceTextFilesKeepsFrameworkIdentifiers(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "generator.go")
+	source := `package generator
+
+// Procyon is replaced with the project name, but Procyon Core remains the framework.
+// Run procyon-cli and inspect .procyon.json with the procyon-core module.
+const marker = "procyon:api-routes"
+`
+	if err := os.WriteFile(path, []byte(source), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := replaceTextFiles(root, map[string]string{
+		"Procyon": "Demo API",
+		"procyon": "demo-api",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(raw)
+	for _, expected := range []string{"Demo API is replaced", "Procyon Core", "procyon-cli", ".procyon.json", "procyon-core", "procyon:api-routes"} {
+		if !strings.Contains(got, expected) {
+			t.Fatalf("generated text lost %q:\n%s", expected, got)
+		}
+	}
+}
+
 func TestTemplateCanBeGeneratedWithoutHello(t *testing.T) {
 	_, currentFile, _, ok := runtime.Caller(0)
 	if !ok {

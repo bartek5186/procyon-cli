@@ -1,7 +1,6 @@
 package moduleinstall
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -73,35 +72,27 @@ func Update(opts UpdateOptions) error {
 	installed.Package = manifest.Package
 	installed.Factory = manifest.Factory
 	installed.LocalSource = source
+	installed.Environment = selectedEnvironment(manifest.Environment, installed.Providers)
 	installed.InstalledAt = time.Now().UTC().Format(time.RFC3339)
 	metadata.Modules[name] = installed
-	generated, err := generatePluginsFile(metadata.Modules)
+	state, err := buildGeneratedProjectState(metadata)
 	if err != nil {
 		return err
 	}
-	metadataBody, err := json.MarshalIndent(metadata, "", "  ")
-	if err != nil {
-		return err
-	}
-	metadataBody = append(metadataBody, '\n')
 
 	fmt.Fprintf(opts.Writer, "Update Go plugin %s: %s -> %s\n", name, previousVersion, manifest.Version)
 	fmt.Fprintf(opts.Writer, "  require %s@%s\n", manifest.GoModule, normalizedGoVersion(manifest.Version))
-	fmt.Fprintln(opts.Writer, "  regenerate plugins_gen.go")
+	fmt.Fprintln(opts.Writer, "  regenerate plugin registration, config and environment example")
 	if opts.DryRun {
 		return nil
 	}
 
-	backup, err := backupPaths([]string{".procyon.json", "plugins_gen.go", "go.mod", "go.sum"})
+	backup, err := backupPaths(generatedProjectPaths("go.mod", "go.sum"))
 	if err != nil {
 		return err
 	}
 	rollback := func() { restoreBackup(backup) }
-	if err := os.WriteFile(".procyon.json", metadataBody, 0o644); err != nil {
-		rollback()
-		return err
-	}
-	if err := os.WriteFile("plugins_gen.go", generated, 0o644); err != nil {
+	if err := writeGeneratedProjectState(state); err != nil {
 		rollback()
 		return err
 	}
@@ -128,34 +119,41 @@ func updatePublishedPlugin(opts UpdateOptions, metadata projectMetadata, install
 	if requested == "" || requested == "latest" {
 		return errors.New("--published requires an explicit --version")
 	}
-	installed.Version = strings.TrimPrefix(normalizedGoVersion(requested), "v")
+	manifest, err := PublishedManifest(opts.Name)
+	if err != nil {
+		return err
+	}
+	if normalizedGoVersion(requested) != normalizedGoVersion(manifest.Version) {
+		return fmt.Errorf("published registry contains %s, not requested version %s", manifest.Version, requested)
+	}
+	if manifest.Name != opts.Name || manifest.GoModule != installed.GoModule {
+		return fmt.Errorf("published manifest describes %s (%s), expected %s (%s)", manifest.Name, manifest.GoModule, opts.Name, installed.GoModule)
+	}
+	if err := validateCompatibility(manifest, metadata); err != nil {
+		return err
+	}
+	installed.Version = manifest.Version
+	installed.Package = manifest.Package
+	installed.Factory = manifest.Factory
+	installed.Environment = selectedEnvironment(manifest.Environment, installed.Providers)
 	installed.LocalSource = ""
 	installed.InstalledAt = time.Now().UTC().Format(time.RFC3339)
 	metadata.Modules[opts.Name] = installed
-	generated, err := generatePluginsFile(metadata.Modules)
+	state, err := buildGeneratedProjectState(metadata)
 	if err != nil {
 		return err
 	}
-	metadataBody, err := json.MarshalIndent(metadata, "", "  ")
-	if err != nil {
-		return err
-	}
-	metadataBody = append(metadataBody, '\n')
 	fmt.Fprintf(opts.Writer, "Update published Go plugin %s: %s -> %s\n", opts.Name, previousVersion, installed.Version)
 	fmt.Fprintf(opts.Writer, "  require %s@%s\n", installed.GoModule, normalizedGoVersion(requested))
 	if opts.DryRun {
 		return nil
 	}
-	backup, err := backupPaths([]string{".procyon.json", "plugins_gen.go", "go.mod", "go.sum"})
+	backup, err := backupPaths(generatedProjectPaths("go.mod", "go.sum"))
 	if err != nil {
 		return err
 	}
 	rollback := func() { restoreBackup(backup) }
-	if err := os.WriteFile(".procyon.json", metadataBody, 0o644); err != nil {
-		rollback()
-		return err
-	}
-	if err := os.WriteFile("plugins_gen.go", generated, 0o644); err != nil {
+	if err := writeGeneratedProjectState(state); err != nil {
 		rollback()
 		return err
 	}

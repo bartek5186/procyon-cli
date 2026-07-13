@@ -30,7 +30,36 @@ source ~/.bashrc
 After that, the CLI can be used from any directory:
 
 ```bash
+procyon-cli
+```
+
+## Interactive Dashboard
+
+Running `procyon-cli` without arguments opens a context-aware interactive menu.
+It inspects both `.procyon.json` and the `github.com/bartek5186/procyon-core`
+dependency in `go.mod`.
+
+Inside a Procyon project, the dashboard shows the project module, template and
+Core versions, CLI version, installed plugin count and available project
+actions. From the menu you can add a published plugin, create and install a
+minimal local plugin for development, list installed plugins, or update Procyon
+Core. Legacy projects without `.procyon.json` are still recognized from their
+Core dependency.
+
+The published-plugin picker is searchable with `/`. Provider choices are not
+shown in the catalog; after selecting a plugin, the CLI loads its manifest and
+opens a separate multi-select only when that plugin defines providers.
+
+Inside an empty directory, the default action initializes a new project in the
+current directory. A non-empty directory that is not a Procyon project is never
+overwritten; the menu only offers to create a project in a new subdirectory.
+
+Explicit commands remain available for scripts and CI:
+
+```bash
 procyon-cli init
+procyon-cli update --version v0.3.0
+procyon-cli module list
 ```
 
 When required flags are omitted in a terminal, `init` opens an interactive TUI
@@ -119,10 +148,10 @@ features are compile-time Go plugins with their own version, business logic and
 dependencies:
 
 ```bash
-procyon-cli module add example --registry ../procyon-modules/registry.json
+procyon-cli module add example --published
 procyon-cli module add payment-system \
   --provider stripe,google,apple \
-  --registry ../procyon-modules/registry.json
+  --published
 ```
 
 The equivalent command form is also accepted:
@@ -143,6 +172,20 @@ Inspect installed modules recorded in `.procyon.json`:
 procyon-cli module list
 procyon-cli module info payment-system
 ```
+
+Disable a plugin without deleting its database tables or stored installation
+settings, then enable it again later:
+
+```bash
+procyon-cli module disable payment-system
+procyon-cli module enable payment-system
+```
+
+Enabled plugins are registered in `plugins_gen.go`. Their namespaced runtime
+defaults are composed into `config/plugins.generated.json`, while environment
+variables declared by the plugin manifest are maintained in generated blocks
+inside `.env.example`. Disabling a plugin removes its generated registration,
+config and environment block but preserves its metadata and database data.
 
 Update an installed plugin after publishing or selecting a newer module source:
 
@@ -175,7 +218,8 @@ Registry discovery order:
 2. `--registry`;
 3. `PROCYON_MODULE_REGISTRY`;
 4. `procyon-modules/registry.json` or `../procyon-modules/registry.json`;
-5. `PROCYON_MODULES_DIR/<module-name>`.
+5. `PROCYON_MODULES_DIR/<module-name>`;
+6. the official `procyon-modules` registry when `--published` is used.
 
 The development registry and reference plugins live in the sibling
 `procyon-modules` workspace. A local source is added with a Go `replace`
@@ -195,7 +239,7 @@ procyon-cli update
 Pin a specific release when needed:
 
 ```bash
-procyon-cli update --version v0.2.0
+procyon-cli update --version v0.3.0
 ```
 
 The command runs `go get`, `go mod tidy`, and `go test ./...`. It updates the
