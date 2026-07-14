@@ -77,8 +77,13 @@ func (*Controller) PriceList() {}
 	writePostmanTestFile(t, filepath.Join(plugin, "docs", "postman", "examples.json"), `{
   "examples": [{"key":"POST /v1/payments/checkout","name":"Stripe checkout","request":{"headers":{"Idempotency-Key":"{{$guid}}"}},"response":{"status":201,"body":{"checkout_url":"https://checkout.stripe.com/example"}}}]
 }`)
+	writePostmanTestFile(t, filepath.Join(plugin, "docs", "postman", "overview.md"), `Payment flow overview.
 
-	generator := &generator{root: project}
+## Stripe
+
+Checkout is completed on Stripe and finalized by a signed webhook.`)
+
+	generator := &generator{root: project, folderDocs: map[string]string{}}
 	routes, err := generator.collectPluginRoutes()
 	if err != nil {
 		t.Fatal(err)
@@ -98,6 +103,9 @@ func (*Controller) PriceList() {}
 	if len(collection.Item) != 1 || collection.Item[0].Name != "Payment System" {
 		t.Fatalf("plugin collection root = %+v, want Payment System", collection.Item)
 	}
+	if !strings.Contains(collection.Item[0].Description, "finalized by a signed webhook") {
+		t.Fatalf("plugin overview was not generated: %+v", collection.Item[0])
+	}
 	priceList := findPostmanItem(collection.Item[0].Item, "PriceList")
 	if priceList == nil || priceList.Request == nil || !strings.Contains(priceList.Request.Description, "purchasable products") {
 		t.Fatalf("plugin request docs were not generated: %+v", priceList)
@@ -105,6 +113,19 @@ func (*Controller) PriceList() {}
 	checkout := findPostmanItem(collection.Item[0].Item, "checkout")
 	if checkout == nil || len(checkout.Response) != 1 || checkout.Response[0].Name != "201 Created - Stripe checkout" {
 		t.Fatalf("named plugin response example was not generated: %+v", checkout)
+	}
+}
+
+func TestLoadPluginOverviewFallsBackToManifestDescription(t *testing.T) {
+	plugin := t.TempDir()
+	writePostmanTestFile(t, filepath.Join(plugin, "docs", "postman", "overview.md"), "\n")
+	writePostmanTestFile(t, filepath.Join(plugin, "procyon-module.json"), `{"description":"Short plugin overview"}`)
+	overview, err := loadPluginOverview(plugin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if overview != "Short plugin overview" {
+		t.Fatalf("overview = %q", overview)
 	}
 }
 

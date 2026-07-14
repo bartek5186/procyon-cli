@@ -137,9 +137,17 @@ var _ coreplugins.Plugin = (*Plugin)(nil)
 			"# %s\n\nLocal Procyon plugin scaffold. Add business logic, routes, policies and migrations in this module.\n",
 			opts.Name,
 		)),
+		"docs/postman/overview.md": []byte(fmt.Sprintf(
+			"The `%s` plugin extends this API. Document its purpose, trust boundaries and end-to-end flow here.\n\n## Flow\n\n1. Describe how the client starts the operation.\n2. Describe server-side validation and persistence.\n3. Describe asynchronous events and the final observable result.\n",
+			opts.Name,
+		)),
 	}
 	for name, body := range files {
-		if err := os.WriteFile(filepath.Join(root, name), body, 0o644); err != nil {
+		path := filepath.Join(root, name)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			return Result{}, err
+		}
+		if err := os.WriteFile(path, body, 0o644); err != nil {
 			return Result{}, err
 		}
 	}

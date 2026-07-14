@@ -69,6 +69,11 @@ project dashboard exposes local generation and explicit remote synchronization.
 Both commands load the project `.env`; values already present in the process
 environment take precedence, while command flags take precedence over both.
 
+Plugins can provide rich Markdown documentation for their top-level Postman
+folder in `docs/postman/overview.md`. The generator places it in the folder's
+**Overview** tab. Without that file it falls back to the plugin `description`
+from `procyon-module.json`.
+
 Synchronize the generated collection with every configured Postman target:
 
 ```bash
@@ -251,7 +256,7 @@ procyon-cli module update payment-system --published
 ```
 
 The published update command resolves the latest version from the official
-registry. Pass `--version v0.3.1` only when an exact version is required.
+registry. Pass `--version v0.3.2` only when an exact version is required.
 
 A shared module contains a `procyon-module.json` next to its `go.mod`. The CLI
 adds it with `go get`, records the selected version and providers in

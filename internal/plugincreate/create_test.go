@@ -19,7 +19,7 @@ func TestCreateMinimalPlugin(t *testing.T) {
 	if result.Root != root {
 		t.Fatalf("Root = %q, want %q", result.Root, root)
 	}
-	for _, name := range []string{"go.mod", "plugin.go", "procyon-module.json", "README.md"} {
+	for _, name := range []string{"go.mod", "plugin.go", "procyon-module.json", "README.md", "docs/postman/overview.md"} {
 		if _, err := os.Stat(filepath.Join(root, name)); err != nil {
 			t.Fatalf("missing %s: %v", name, err)
 		}

@@ -50,11 +50,12 @@ type postmanVar struct {
 }
 
 type postmanItem struct {
-	Name     string            `json:"name"`
-	Auth     *postmanAuth      `json:"auth,omitempty"`
-	Item     []postmanItem     `json:"item,omitempty"`
-	Request  *postmanRequest   `json:"request,omitempty"`
-	Response []postmanResponse `json:"response,omitempty"`
+	Name        string            `json:"name"`
+	Description string            `json:"description,omitempty"`
+	Auth        *postmanAuth      `json:"auth,omitempty"`
+	Item        []postmanItem     `json:"item,omitempty"`
+	Request     *postmanRequest   `json:"request,omitempty"`
+	Response    []postmanResponse `json:"response,omitempty"`
 }
 
 type postmanAuth struct {
@@ -130,6 +131,7 @@ type generator struct {
 	funcReturns map[string][]ast.Expr
 
 	manualExamples map[string][]manualExample
+	folderDocs     map[string]string
 }
 
 type manualExamplesFile struct {
@@ -214,6 +216,7 @@ func Generate(opts Options) (Result, error) {
 		funcReturns: map[string][]ast.Expr{},
 
 		manualExamples: map[string][]manualExample{},
+		folderDocs:     map[string]string{},
 	}
 	if err := gen.load(); err != nil {
 		return Result{}, err
@@ -694,6 +697,16 @@ func (g *generator) collectPluginRoutes() ([]route, error) {
 		if err := g.loadManualExamples(filepath.Join(source, "docs", "postman")); err != nil {
 			return nil, fmt.Errorf("load plugin %s Postman examples: %w", name, err)
 		}
+		overview, err := loadPluginOverview(source)
+		if err != nil {
+			return nil, fmt.Errorf("load plugin %s Postman overview: %w", name, err)
+		}
+		if overview != "" {
+			if g.folderDocs == nil {
+				g.folderDocs = map[string]string{}
+			}
+			g.folderDocs[titleForSegment(name)] = overview
+		}
 		pluginRoutes, err := collectRoutesFromPlugin(source, name)
 		if err != nil {
 			return nil, fmt.Errorf("collect plugin %s routes: %w", name, err)
@@ -701,6 +714,36 @@ func (g *generator) collectPluginRoutes() ([]route, error) {
 		routes = append(routes, pluginRoutes...)
 	}
 	return routes, nil
+}
+
+type postmanModuleManifest struct {
+	Description string `json:"description,omitempty"`
+}
+
+func loadPluginOverview(root string) (string, error) {
+	path := filepath.Join(root, "docs", "postman", "overview.md")
+	content, err := os.ReadFile(path)
+	if err == nil {
+		if overview := strings.TrimSpace(string(content)); overview != "" {
+			return overview, nil
+		}
+	}
+	if err != nil && !os.IsNotExist(err) {
+		return "", err
+	}
+	manifestPath := filepath.Join(root, "procyon-module.json")
+	content, err = os.ReadFile(manifestPath)
+	if os.IsNotExist(err) {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	var manifest postmanModuleManifest
+	if err := json.Unmarshal(content, &manifest); err != nil {
+		return "", fmt.Errorf("parse %s: %w", manifestPath, err)
+	}
+	return strings.TrimSpace(manifest.Description), nil
 }
 
 func (g *generator) pluginPackageDir(module postmanInstalledModule) (string, error) {
@@ -1003,6 +1046,7 @@ func (g *generator) collection(name string, routes []route, vars collectionVars)
 	}
 
 	items := nestFolders(folders)
+	applyFolderDocs(items, g.folderDocs, nil)
 	setAdminFolderAuth(items)
 	return postmanCollection{
 		Info: postmanInfo{
@@ -1017,6 +1061,16 @@ func (g *generator) collection(name string, routes []route, vars collectionVars)
 			{Key: "authKey", Value: vars.AuthKey, Type: "string"},
 		},
 		Item: items,
+	}
+}
+
+func applyFolderDocs(items []postmanItem, docs map[string]string, parent []string) {
+	for index := range items {
+		path := append(append([]string(nil), parent...), items[index].Name)
+		if description := strings.TrimSpace(docs[strings.Join(path, "/")]); description != "" {
+			items[index].Description = description
+		}
+		applyFolderDocs(items[index].Item, docs, path)
 	}
 }
 
