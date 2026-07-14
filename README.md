@@ -58,7 +58,7 @@ Explicit commands remain available for scripts and CI:
 
 ```bash
 procyon-cli init
-procyon-cli update --version v0.3.0
+procyon-cli update --version v0.3.1
 procyon-cli module list
 ```
 
@@ -239,7 +239,7 @@ procyon-cli update
 Pin a specific release when needed:
 
 ```bash
-procyon-cli update --version v0.3.0
+procyon-cli update --version v0.3.1
 ```
 
 The command runs `go get`, `go mod tidy`, and `go test ./...`. It updates the

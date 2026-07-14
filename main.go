@@ -95,13 +95,13 @@ func parseModuleCreateArgs(args []string) (modulegen.Options, error) {
 }
 
 func usage() {
-	fmt.Fprintf(os.Stderr, "usage:\n  procyon-cli init [flags]\n  procyon-cli module create <module_name> [--force]\n  procyon-cli module add <module_name> [flags]\n  procyon-cli module update <module_name> [flags]\n  procyon-cli module enable <module_name> [--dry-run]\n  procyon-cli module disable <module_name> [--dry-run]\n  procyon-cli module list\n  procyon-cli module info <module_name>\n  procyon-cli update [--version v0.3.0] [--dry-run]\n\n")
+	fmt.Fprintf(os.Stderr, "usage:\n  procyon-cli init [flags]\n  procyon-cli module create <module_name> [--force]\n  procyon-cli module add <module_name> [flags]\n  procyon-cli module update <module_name> [flags]\n  procyon-cli module enable <module_name> [--dry-run]\n  procyon-cli module disable <module_name> [--dry-run]\n  procyon-cli module list\n  procyon-cli module info <module_name>\n  procyon-cli update [--version v0.3.1] [--dry-run]\n\n")
 	fmt.Fprintf(os.Stderr, "examples:\n")
 	fmt.Fprintf(os.Stderr, "  procyon-cli init\n")
 	fmt.Fprintf(os.Stderr, "  procyon-cli init --name przyjazne-server --module github.com/acme/przyjazne-server --db postgres --out ../przyjazne-v2\n")
 	fmt.Fprintf(os.Stderr, "  procyon-cli module create invoice\n")
 	fmt.Fprintf(os.Stderr, "  procyon-cli module add payment-system --provider stripe\n")
-	fmt.Fprintf(os.Stderr, "  procyon-cli update --version v0.3.0\n")
+	fmt.Fprintf(os.Stderr, "  procyon-cli update --version v0.3.1\n")
 }
 
 func moduleUsage() {

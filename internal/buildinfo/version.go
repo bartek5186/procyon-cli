@@ -1,7 +1,7 @@
 package buildinfo
 
 const (
-	CLIVersion      = "0.3.0"
-	TemplateVersion = "v0.3.0"
+	CLIVersion      = "0.3.1"
+	TemplateVersion = "v0.3.1"
 	CoreVersion     = "v0.3.0"
 )
