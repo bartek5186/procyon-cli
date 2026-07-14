@@ -35,7 +35,7 @@ require (
   "cli_min_version": "0.2.0",
   "modules": {
     "payment-system": {"version": "0.1.1"},
-    "example": {"version": "0.1.1"}
+    "example": {"version": "0.1.1", "local_source": "plugins/example"}
   }
 }`)
 
@@ -51,6 +51,9 @@ require (
 	}
 	if len(ctx.Modules) != 2 || ctx.Modules[0].Name != "example" || ctx.Modules[1].Name != "payment-system" {
 		t.Fatalf("modules are not sorted: %+v", ctx.Modules)
+	}
+	if ctx.Modules[0].LocalSource != "plugins/example" {
+		t.Fatalf("local plugin source was not detected: %+v", ctx.Modules[0])
 	}
 }
 

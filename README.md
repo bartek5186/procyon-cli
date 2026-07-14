@@ -40,11 +40,12 @@ It inspects both `.procyon.json` and the `github.com/bartek5186/procyon-core`
 dependency in `go.mod`.
 
 Inside a Procyon project, the dashboard shows the project module, template and
-Core versions, CLI version, installed plugin count and available project
-actions. From the menu you can add a published plugin, create and install a
-minimal local plugin for development, list installed plugins, or update Procyon
-Core. Legacy projects without `.procyon.json` are still recognized from their
-Core dependency.
+Core versions, CLI version, installed plugin count and updates available in the
+published module registry. From the menu you can add a published plugin, update
+an outdated published plugin, create and install a minimal local plugin for
+development, list installed plugins, or update Procyon Core. Local development
+plugins are not compared with published releases. Legacy projects without
+`.procyon.json` are still recognized from their Core dependency.
 
 The published-plugin picker is searchable with `/`. Provider choices are not
 shown in the catalog; after selecting a plugin, the CLI loads its manifest and
@@ -54,11 +55,59 @@ Inside an empty directory, the default action initializes a new project in the
 current directory. A non-empty directory that is not a Procyon project is never
 overwritten; the menu only offers to create a project in a new subdirectory.
 
+## Postman Collection
+
+Generate a collection for the current Procyon project with:
+
+```bash
+procyon-cli postman generate
+```
+
+The command scans application routes, installed plugin routes, controller Go
+documentation and module-owned `docs/postman/*.json` examples. The interactive
+project dashboard exposes local generation and explicit remote synchronization.
+Both commands load the project `.env`; values already present in the process
+environment take precedence, while command flags take precedence over both.
+
+Synchronize the generated collection with every configured Postman target:
+
+```bash
+procyon-cli postman sync
+```
+
+There is no target limit. Use an unnumbered primary target and any numbered
+targets (`_1`, `_2`, ...); indexes may have gaps:
+
+```dotenv
+POSTMAN_API_KEY=shared_postman_api_key
+POSTMAN_COLLECTION_ID=primary_collection_id
+POSTMAN_TARGET_NAME=Primary
+
+POSTMAN_COLLECTION_ID_1=staging_collection_id
+POSTMAN_TARGET_NAME_1=Staging
+
+POSTMAN_API_KEY_8=separate_account_api_key
+POSTMAN_COLLECTION_ID_8=production_collection_id
+POSTMAN_TARGET_NAME_8=Production
+```
+
+Numbered targets use the shared `POSTMAN_API_KEY` unless
+`POSTMAN_API_KEY_N` is set. `POSTMAN_API_COLLECTION_ID_N` remains supported as
+a legacy alias for `POSTMAN_COLLECTION_ID_N`. A missing target pair fails the
+sync instead of silently skipping that target. With no targets, `sync` still
+generates the local collection and performs no remote request. API keys are
+never printed.
+
+Generation settings can also come from `.env`: `POSTMAN_COLLECTION_FILE`,
+`POSTMAN_COLLECTION_NAME`, `POSTMAN_CONFIG_PATH`, `POSTMAN_BASE_URL`,
+`POSTMAN_ADMIN_URL`, `POSTMAN_UPLOAD_URL`, `POSTMAN_ADMIN_KEY` and
+`POSTMAN_AUTH_KEY`.
+
 Explicit commands remain available for scripts and CI:
 
 ```bash
 procyon-cli init
-procyon-cli update --version v0.3.1
+procyon-cli update --version v0.3.2
 procyon-cli module list
 ```
 
@@ -198,8 +247,11 @@ For tagged repositories, omit the local `replace` and use the published module:
 
 ```bash
 procyon-cli module add payment-system --provider stripe --published
-procyon-cli module update payment-system --published --version v0.2.0
+procyon-cli module update payment-system --published
 ```
+
+The published update command resolves the latest version from the official
+registry. Pass `--version v0.3.1` only when an exact version is required.
 
 A shared module contains a `procyon-module.json` next to its `go.mod`. The CLI
 adds it with `go get`, records the selected version and providers in
@@ -239,7 +291,7 @@ procyon-cli update
 Pin a specific release when needed:
 
 ```bash
-procyon-cli update --version v0.3.1
+procyon-cli update --version v0.3.2
 ```
 
 The command runs `go get`, `go mod tidy`, and `go test ./...`. It updates the

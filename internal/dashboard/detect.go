@@ -33,9 +33,10 @@ type Context struct {
 }
 
 type Module struct {
-	Name    string
-	Version string
-	Enabled bool
+	Name        string
+	Version     string
+	Enabled     bool
+	LocalSource string
 }
 
 type projectMetadata struct {
@@ -48,8 +49,9 @@ type projectMetadata struct {
 }
 
 type moduleMetadata struct {
-	Version string `json:"version"`
-	Enabled *bool  `json:"enabled,omitempty"`
+	Version     string `json:"version"`
+	Enabled     *bool  `json:"enabled,omitempty"`
+	LocalSource string `json:"local_source,omitempty"`
 }
 
 func Detect(root string) (Context, error) {
@@ -95,7 +97,10 @@ func Detect(root string) (Context, error) {
 	}
 	for name, installed := range metadata.Modules {
 		enabled := installed.Enabled == nil || *installed.Enabled
-		ctx.Modules = append(ctx.Modules, Module{Name: name, Version: firstNonEmpty(installed.Version, "unknown"), Enabled: enabled})
+		ctx.Modules = append(ctx.Modules, Module{
+			Name: name, Version: firstNonEmpty(installed.Version, "unknown"), Enabled: enabled,
+			LocalSource: strings.TrimSpace(installed.LocalSource),
+		})
 	}
 	sort.Slice(ctx.Modules, func(i, j int) bool { return ctx.Modules[i].Name < ctx.Modules[j].Name })
 	return ctx, nil

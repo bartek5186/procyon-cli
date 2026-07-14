@@ -12,6 +12,7 @@ import (
 	"github.com/bartek5186/procyon-cli/internal/buildinfo"
 	"github.com/bartek5186/procyon-cli/internal/moduleinstall"
 	"github.com/bartek5186/procyon-cli/internal/plugincreate"
+	"github.com/bartek5186/procyon-cli/internal/postmangen"
 	"github.com/bartek5186/procyon-cli/internal/projectinit"
 	"github.com/bartek5186/procyon-cli/internal/projectupdate"
 )
@@ -104,12 +105,14 @@ func runOtherDirectoryMenu(ctx Context) error {
 
 func runProjectMenu(ctx Context) error {
 	for {
+		catalog, catalogErr := moduleinstall.PublishedCatalog()
+		updates := availablePluginUpdates(catalog, ctx.Modules)
 		action := "exit"
 		form := newForm(
-			huh.NewNote().Title("✦  P R O C Y O N").Description(projectSummary(ctx)),
+			huh.NewNote().Title("✦  P R O C Y O N").Description(projectSummary(ctx, updates, catalogErr)),
 			huh.NewSelect[string]().
 				Title("Project actions").
-				Options(projectActionOptions(ctx)...).
+				Options(projectActionOptions(ctx, updates)...).
 				Value(&action),
 		)
 		if err := runForm(form); err != nil {
@@ -124,10 +127,16 @@ func runProjectMenu(ctx Context) error {
 			return promptSetPluginEnabled(ctx, true)
 		case "disable_plugin":
 			return promptSetPluginEnabled(ctx, false)
+		case "update_plugin":
+			return promptUpdatePlugin(updates)
 		case "update":
 			return projectupdate.Run(projectupdate.Options{Version: "latest", Writer: os.Stdout})
+		case "generate_postman":
+			return generatePostmanCollection(ctx)
+		case "sync_postman":
+			return syncPostmanCollections(ctx)
 		case "plugins":
-			if err := showPlugins(ctx); err != nil {
+			if err := showPlugins(ctx, updates, catalogErr); err != nil {
 				return err
 			}
 		default:
@@ -136,7 +145,7 @@ func runProjectMenu(ctx Context) error {
 	}
 }
 
-func projectActionOptions(ctx Context) []huh.Option[string] {
+func projectActionOptions(ctx Context, updates []pluginUpdate) []huh.Option[string] {
 	options := []huh.Option[string]{
 		huh.NewOption("Add a published plugin", "add_plugin"),
 		huh.NewOption("Create a local plugin for development", "create_plugin"),
@@ -152,11 +161,111 @@ func projectActionOptions(ctx Context) []huh.Option[string] {
 	if hasEnabled {
 		options = append(options, huh.NewOption("Disable a plugin", "disable_plugin"))
 	}
+	if len(updates) > 0 {
+		options = append(options, huh.NewOption(fmt.Sprintf("Update a plugin  (%d available)", len(updates)), "update_plugin"))
+	}
 	return append(options,
 		huh.NewOption("Show installed plugins", "plugins"),
+		huh.NewOption("Generate Postman collection", "generate_postman"),
+		huh.NewOption("Sync Postman collections", "sync_postman"),
 		huh.NewOption("Update Procyon Core", "update"),
 		huh.NewOption("Exit", "exit"),
 	)
+}
+
+func generatePostmanCollection(ctx Context) error {
+	opts, err := postmanOptions(ctx)
+	if err != nil {
+		return err
+	}
+	result, err := postmangen.Generate(opts)
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(os.Stdout, "Generated %s with %d routes.\n", result.OutputPath, result.RouteCount)
+	return nil
+}
+
+func syncPostmanCollections(ctx Context) error {
+	opts, err := postmanOptions(ctx)
+	if err != nil {
+		return err
+	}
+	result, err := postmangen.Sync(postmangen.SyncOptions{
+		Generation: opts,
+		Writer:     os.Stdout,
+	})
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(os.Stdout, "Generated %s with %d routes.\n", result.Generation.OutputPath, result.Generation.RouteCount)
+	if len(result.Targets) == 0 {
+		fmt.Fprintln(os.Stdout, "No Postman sync targets configured; collection generated locally only.")
+		return nil
+	}
+	fmt.Fprintf(os.Stdout, "Synced %d Postman target(s).\n", len(result.Targets))
+	return nil
+}
+
+func postmanOptions(ctx Context) (postmangen.Options, error) {
+	opts, _, err := postmangen.ResolveEnvironment(postmangen.Options{Root: ctx.Root})
+	if err != nil {
+		return postmangen.Options{}, err
+	}
+	if strings.TrimSpace(opts.Name) == "" {
+		opts.Name = firstNonEmpty(ctx.ProjectName, filepath.Base(ctx.Root)) + " Generated API"
+	}
+	return opts, nil
+}
+
+type pluginUpdate struct {
+	Name             string
+	InstalledVersion string
+	AvailableVersion string
+}
+
+func availablePluginUpdates(catalog []moduleinstall.CatalogModule, installed []Module) []pluginUpdate {
+	installedByName := make(map[string]Module, len(installed))
+	for _, module := range installed {
+		installedByName[module.Name] = module
+	}
+	updates := make([]pluginUpdate, 0)
+	for _, published := range catalog {
+		current, ok := installedByName[published.Name]
+		if !ok || current.LocalSource != "" || !moduleinstall.IsNewerVersion(current.Version, published.Version) {
+			continue
+		}
+		updates = append(updates, pluginUpdate{
+			Name: published.Name, InstalledVersion: current.Version, AvailableVersion: published.Version,
+		})
+	}
+	return updates
+}
+
+func promptUpdatePlugin(updates []pluginUpdate) error {
+	if len(updates) == 0 {
+		return errors.New("all published plugins are up to date")
+	}
+	name := updates[0].Name
+	options := make([]huh.Option[string], 0, len(updates))
+	versions := make(map[string]string, len(updates))
+	for _, update := range updates {
+		versions[update.Name] = update.AvailableVersion
+		label := fmt.Sprintf("%s  v%s → v%s", update.Name,
+			strings.TrimPrefix(update.InstalledVersion, "v"), strings.TrimPrefix(update.AvailableVersion, "v"))
+		options = append(options, huh.NewOption(label, update.Name))
+	}
+	form := newForm(huh.NewSelect[string]().
+		Title("Update a published plugin").
+		Description("The module dependency, generated plugin configuration and environment example will be updated.").
+		Options(options...).
+		Value(&name))
+	if err := runForm(form); err != nil {
+		return err
+	}
+	return moduleinstall.Update(moduleinstall.UpdateOptions{
+		Name: name, Version: versions[name], Published: true, Writer: os.Stdout,
+	})
 }
 
 func promptSetPluginEnabled(ctx Context, enabled bool) error {
@@ -346,7 +455,11 @@ func promptCreateAndInstallPlugin(ctx Context) error {
 	})
 }
 
-func showPlugins(ctx Context) error {
+func showPlugins(ctx Context, updates []pluginUpdate, catalogErr error) error {
+	updatesByName := make(map[string]pluginUpdate, len(updates))
+	for _, update := range updates {
+		updatesByName[update.Name] = update
+	}
 	description := "No shared plugins are installed."
 	if len(ctx.Modules) > 0 {
 		lines := make([]string, 0, len(ctx.Modules))
@@ -355,7 +468,17 @@ func showPlugins(ctx Context) error {
 			if !module.Enabled {
 				status = "disabled"
 			}
-			lines = append(lines, fmt.Sprintf("• %s %s (%s)", module.Name, module.Version, status))
+			line := fmt.Sprintf("• %s %s (%s)", module.Name, module.Version, status)
+			if update, ok := updatesByName[module.Name]; ok {
+				line += fmt.Sprintf(" → %s available", update.AvailableVersion)
+			}
+			if module.LocalSource != "" {
+				line += " — local development source"
+			}
+			lines = append(lines, line)
+		}
+		if catalogErr != nil {
+			lines = append(lines, "", "Published registry unavailable; update status could not be checked.")
 		}
 		description = strings.Join(lines, "\n")
 	}
@@ -363,7 +486,7 @@ func showPlugins(ctx Context) error {
 	return runForm(form)
 }
 
-func projectSummary(ctx Context) string {
+func projectSummary(ctx Context, updates []pluginUpdate, catalogErr error) string {
 	name := firstNonEmpty(ctx.ProjectName, filepath.Base(ctx.Root))
 	lines := []string{
 		"Procyon project detected",
@@ -375,6 +498,11 @@ func projectSummary(ctx Context) string {
 		"CLI: v" + buildinfo.CLIVersion,
 		fmt.Sprintf("Plugins: %d", len(ctx.Modules)),
 		"Directory: " + ctx.Root,
+	}
+	if catalogErr != nil {
+		lines = append(lines, "Plugin updates: unavailable")
+	} else {
+		lines = append(lines, fmt.Sprintf("Plugin updates: %d", len(updates)))
 	}
 	if ctx.Reason != "" {
 		lines = append(lines, "", "Warning: "+ctx.Reason)

@@ -116,12 +116,12 @@ func Update(opts UpdateOptions) error {
 
 func updatePublishedPlugin(opts UpdateOptions, metadata projectMetadata, installed InstalledModule, previousVersion string) error {
 	requested := strings.TrimSpace(opts.Version)
-	if requested == "" || requested == "latest" {
-		return errors.New("--published requires an explicit --version")
-	}
 	manifest, err := PublishedManifest(opts.Name)
 	if err != nil {
 		return err
+	}
+	if requested == "" || requested == "latest" {
+		requested = manifest.Version
 	}
 	if normalizedGoVersion(requested) != normalizedGoVersion(manifest.Version) {
 		return fmt.Errorf("published registry contains %s, not requested version %s", manifest.Version, requested)

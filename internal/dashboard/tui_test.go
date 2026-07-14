@@ -1,6 +1,7 @@
 package dashboard
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/bartek5186/procyon-cli/internal/moduleinstall"
@@ -44,5 +45,55 @@ func TestProviderChoicesComeFromSelectedManifest(t *testing.T) {
 	}
 	if len(options) != 3 || options[1].Key != "Google Play" || options[2].Key != "Apple App Store" {
 		t.Fatalf("unexpected provider options: %+v", options)
+	}
+}
+
+func TestAvailablePluginUpdatesComparesPublishedVersions(t *testing.T) {
+	catalog := []moduleinstall.CatalogModule{
+		{Name: "example", Version: "0.1.1"},
+		{Name: "payment-system", Version: "0.3.1"},
+		{Name: "local-plugin", Version: "9.0.0"},
+	}
+	installed := []Module{
+		{Name: "example", Version: "0.1.1"},
+		{Name: "payment-system", Version: "0.3.0"},
+		{Name: "local-plugin", Version: "0.1.0", LocalSource: "plugins/local-plugin"},
+	}
+	updates := availablePluginUpdates(catalog, installed)
+	if len(updates) != 1 || updates[0].Name != "payment-system" || updates[0].AvailableVersion != "0.3.1" {
+		t.Fatalf("unexpected updates: %+v", updates)
+	}
+}
+
+func TestProjectActionsOfferPluginUpdateWhenAvailable(t *testing.T) {
+	options := projectActionOptions(Context{}, []pluginUpdate{{Name: "payment-system"}})
+	for _, option := range options {
+		if option.Value == "update_plugin" {
+			return
+		}
+	}
+	t.Fatal("missing update_plugin action")
+}
+
+func TestProjectActionsIncludePostmanGeneration(t *testing.T) {
+	options := projectActionOptions(Context{}, nil)
+	foundGenerate, foundSync := false, false
+	for _, option := range options {
+		if option.Value == "generate_postman" {
+			foundGenerate = true
+		}
+		if option.Value == "sync_postman" {
+			foundSync = true
+		}
+	}
+	if !foundGenerate || !foundSync {
+		t.Fatalf("missing Postman actions: generate=%t sync=%t", foundGenerate, foundSync)
+	}
+}
+
+func TestProjectSummaryShowsAvailablePluginUpdates(t *testing.T) {
+	summary := projectSummary(Context{ProjectName: "demo"}, []pluginUpdate{{Name: "payment-system"}}, nil)
+	if !strings.Contains(summary, "Plugin updates: 1") {
+		t.Fatalf("missing update count in summary: %q", summary)
 	}
 }

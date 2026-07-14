@@ -21,6 +21,12 @@ func List(writer io.Writer) error {
 		return nil
 	}
 	names := make([]string, 0, len(metadata.Modules))
+	availableVersions := map[string]string{}
+	if catalog, catalogErr := PublishedCatalog(); catalogErr == nil {
+		for _, module := range catalog {
+			availableVersions[module.Name] = module.Version
+		}
+	}
 	for name := range metadata.Modules {
 		names = append(names, name)
 	}
@@ -35,7 +41,11 @@ func List(writer io.Writer) error {
 		if len(module.Providers) > 0 {
 			providers = " [" + strings.Join(module.Providers, ", ") + "]"
 		}
-		fmt.Fprintf(writer, "%s %s [%s]%s\n", name, module.Version, status, providers)
+		update := ""
+		if module.LocalSource == "" && IsNewerVersion(module.Version, availableVersions[name]) {
+			update = " -> " + availableVersions[name] + " available"
+		}
+		fmt.Fprintf(writer, "%s %s [%s]%s%s\n", name, module.Version, status, providers, update)
 	}
 	return nil
 }

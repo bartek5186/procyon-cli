@@ -11,6 +11,7 @@ import (
 	"github.com/bartek5186/procyon-cli/internal/dashboard"
 	"github.com/bartek5186/procyon-cli/internal/modulegen"
 	"github.com/bartek5186/procyon-cli/internal/moduleinstall"
+	"github.com/bartek5186/procyon-cli/internal/postmangen"
 	"github.com/bartek5186/procyon-cli/internal/projectinit"
 	"github.com/bartek5186/procyon-cli/internal/projectupdate"
 )
@@ -49,6 +50,8 @@ func main() {
 		}
 	case "module":
 		runModuleCommand(os.Args[2:])
+	case "postman":
+		runPostmanCommand(os.Args[2:])
 	case "add":
 		if len(os.Args) >= 3 && os.Args[2] == "module" {
 			runModuleAdd(os.Args[3:])
@@ -95,13 +98,63 @@ func parseModuleCreateArgs(args []string) (modulegen.Options, error) {
 }
 
 func usage() {
-	fmt.Fprintf(os.Stderr, "usage:\n  procyon-cli init [flags]\n  procyon-cli module create <module_name> [--force]\n  procyon-cli module add <module_name> [flags]\n  procyon-cli module update <module_name> [flags]\n  procyon-cli module enable <module_name> [--dry-run]\n  procyon-cli module disable <module_name> [--dry-run]\n  procyon-cli module list\n  procyon-cli module info <module_name>\n  procyon-cli update [--version v0.3.1] [--dry-run]\n\n")
+	fmt.Fprintf(os.Stderr, "usage:\n  procyon-cli init [flags]\n  procyon-cli module create <module_name> [--force]\n  procyon-cli module add <module_name> [flags]\n  procyon-cli module update <module_name> [flags]\n  procyon-cli module enable <module_name> [--dry-run]\n  procyon-cli module disable <module_name> [--dry-run]\n  procyon-cli module list\n  procyon-cli module info <module_name>\n  procyon-cli postman generate [flags]\n  procyon-cli postman sync [flags]\n  procyon-cli update [--version v0.3.2] [--dry-run]\n\n")
 	fmt.Fprintf(os.Stderr, "examples:\n")
 	fmt.Fprintf(os.Stderr, "  procyon-cli init\n")
 	fmt.Fprintf(os.Stderr, "  procyon-cli init --name przyjazne-server --module github.com/acme/przyjazne-server --db postgres --out ../przyjazne-v2\n")
 	fmt.Fprintf(os.Stderr, "  procyon-cli module create invoice\n")
 	fmt.Fprintf(os.Stderr, "  procyon-cli module add payment-system --provider stripe\n")
-	fmt.Fprintf(os.Stderr, "  procyon-cli update --version v0.3.1\n")
+	fmt.Fprintf(os.Stderr, "  procyon-cli postman generate\n")
+	fmt.Fprintf(os.Stderr, "  procyon-cli postman sync\n")
+	fmt.Fprintf(os.Stderr, "  procyon-cli update --version v0.3.2\n")
+}
+
+func runPostmanCommand(args []string) {
+	if len(args) == 0 || args[0] != "generate" && args[0] != "sync" {
+		postmanUsage()
+		os.Exit(2)
+	}
+	command := args[0]
+	opts := postmangen.Options{}
+	flags := flag.NewFlagSet("procyon-cli postman "+command, flag.ExitOnError)
+	flags.StringVar(&opts.Root, "root", ".", "Procyon project directory containing routes.go")
+	flags.StringVar(&opts.Out, "out", "", "Output collection path relative to the project")
+	flags.StringVar(&opts.Name, "name", "", "Postman collection name")
+	flags.StringVar(&opts.ConfigPath, "config", "", "Runtime config used for default collection variables")
+	flags.StringVar(&opts.BaseURL, "base-url", "", "baseURL variable override")
+	flags.StringVar(&opts.AdminURL, "admin-url", "", "adminURL variable override")
+	flags.StringVar(&opts.UploadURL, "upload-url", "", "uploadURL variable override")
+	flags.StringVar(&opts.AdminKey, "admin-key", "", "adminKey variable override")
+	flags.StringVar(&opts.AuthKey, "auth-key", "", "authKey variable override")
+	_ = flags.Parse(args[1:])
+	if flags.NArg() != 0 {
+		fmt.Fprintf(os.Stderr, "procyon-cli postman %s: unexpected arguments: %s\n", command, strings.Join(flags.Args(), " "))
+		os.Exit(2)
+	}
+	if command == "generate" {
+		result, err := postmangen.GenerateFromEnvironment(opts)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "procyon-cli postman generate: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("Generated %s with %d routes.\n", result.OutputPath, result.RouteCount)
+		return
+	}
+	result, err := postmangen.Sync(postmangen.SyncOptions{Generation: opts, Writer: os.Stdout})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "procyon-cli postman sync: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Printf("Generated %s with %d routes.\n", result.Generation.OutputPath, result.Generation.RouteCount)
+	if len(result.Targets) == 0 {
+		fmt.Println("No Postman sync targets configured; collection generated locally only.")
+		return
+	}
+	fmt.Printf("Synced %d Postman target(s).\n", len(result.Targets))
+}
+
+func postmanUsage() {
+	fmt.Fprintln(os.Stderr, "usage:\n  procyon-cli postman generate [--root path] [--out path] [--name name]\n  procyon-cli postman sync [--root path] [--out path] [--name name]")
 }
 
 func moduleUsage() {

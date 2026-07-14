@@ -371,6 +371,13 @@ func versionAtLeast(current, minimum string) (bool, error) {
 	return true, nil
 }
 
+// IsNewerVersion reports whether available is a strictly newer semantic
+// version than installed. Invalid or incomplete versions are not updateable.
+func IsNewerVersion(installed, available string) bool {
+	upToDate, err := versionAtLeast(installed, available)
+	return err == nil && !upToDate
+}
+
 func parseVersion(value string) ([3]int, error) {
 	var out [3]int
 	value = strings.TrimPrefix(strings.TrimSpace(value), "v")

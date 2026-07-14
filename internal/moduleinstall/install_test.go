@@ -10,6 +10,17 @@ import (
 	"testing"
 )
 
+func TestIsNewerVersion(t *testing.T) {
+	if !IsNewerVersion("0.3.0", "0.3.1") {
+		t.Fatal("expected 0.3.1 to be newer than 0.3.0")
+	}
+	for _, test := range [][2]string{{"0.3.1", "0.3.1"}, {"0.4.0", "0.3.1"}, {"unknown", "0.3.1"}} {
+		if IsNewerVersion(test[0], test[1]) {
+			t.Fatalf("unexpected update from %s to %s", test[0], test[1])
+		}
+	}
+}
+
 func TestRunInstallsAndRecordsModule(t *testing.T) {
 	project, source := moduleInstallFixture(t)
 	withWorkingDirectory(t, project)
