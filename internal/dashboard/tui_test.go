@@ -91,6 +91,18 @@ func TestProjectActionsIncludePostmanGeneration(t *testing.T) {
 	}
 }
 
+func TestProjectActionsIncludeExplicitCoreAndCLIUpdates(t *testing.T) {
+	options := projectActionOptions(Context{}, nil)
+	foundCore, foundCLI := false, false
+	for _, option := range options {
+		foundCore = foundCore || option.Value == "update"
+		foundCLI = foundCLI || option.Value == "self_update"
+	}
+	if !foundCore || !foundCLI {
+		t.Fatalf("missing update actions: core=%t cli=%t", foundCore, foundCLI)
+	}
+}
+
 func TestProjectSummaryShowsAvailablePluginUpdates(t *testing.T) {
 	summary := projectSummary(Context{ProjectName: "demo"}, []pluginUpdate{{Name: "payment-system"}}, nil)
 	if !strings.Contains(summary, "Plugin updates: 1") {

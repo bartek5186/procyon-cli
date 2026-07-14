@@ -15,6 +15,7 @@ import (
 	"github.com/bartek5186/procyon-cli/internal/postmangen"
 	"github.com/bartek5186/procyon-cli/internal/projectinit"
 	"github.com/bartek5186/procyon-cli/internal/projectupdate"
+	"github.com/bartek5186/procyon-cli/internal/selfupdate"
 )
 
 var ErrNonInteractive = errors.New("interactive terminal required")
@@ -131,6 +132,8 @@ func runProjectMenu(ctx Context) error {
 			return promptUpdatePlugin(updates)
 		case "update":
 			return projectupdate.Run(projectupdate.Options{Version: "latest", Writer: os.Stdout})
+		case "self_update":
+			return selfupdate.Run(selfupdate.Options{Version: "latest", Writer: os.Stdout})
 		case "generate_postman":
 			return generatePostmanCollection(ctx)
 		case "sync_postman":
@@ -169,6 +172,7 @@ func projectActionOptions(ctx Context, updates []pluginUpdate) []huh.Option[stri
 		huh.NewOption("Generate Postman collection", "generate_postman"),
 		huh.NewOption("Sync Postman collections", "sync_postman"),
 		huh.NewOption("Update Procyon Core", "update"),
+		huh.NewOption("Update Procyon CLI", "self_update"),
 		huh.NewOption("Exit", "exit"),
 	)
 }

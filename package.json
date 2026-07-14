@@ -1,0 +1,40 @@
+{
+  "name": "procyon-cli",
+  "version": "0.3.4",
+  "description": "Command-line tools for creating and maintaining Procyon Go backends",
+  "keywords": [
+    "procyon",
+    "go",
+    "backend",
+    "cli"
+  ],
+  "homepage": "https://github.com/bartek5186/procyon-cli#readme",
+  "bugs": {
+    "url": "https://github.com/bartek5186/procyon-cli/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/bartek5186/procyon-cli.git"
+  },
+  "bin": {
+    "procyon-cli": "npm/bin/procyon-cli.js"
+  },
+  "files": [
+    "npm/bin",
+    "npm/lib",
+    "npm/scripts/install.js"
+  ],
+  "scripts": {
+    "postinstall": "node npm/scripts/install.js",
+    "test": "node --test npm/test/*.test.js",
+    "verify-release": "node npm/scripts/verify-release.js",
+    "prepack": "npm test"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org"
+  }
+}
