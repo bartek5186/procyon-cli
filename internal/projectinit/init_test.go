@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 )
@@ -88,11 +87,7 @@ const marker = "procyon:api-routes"
 }
 
 func TestTemplateCanBeGeneratedWithoutHello(t *testing.T) {
-	_, currentFile, _, ok := runtime.Caller(0)
-	if !ok {
-		t.Fatal("cannot locate test source")
-	}
-	source := filepath.Clean(filepath.Join(filepath.Dir(currentFile), "..", "..", "..", "procyon"))
+	source := helloTemplateFixture(t)
 	out := t.TempDir()
 	opts := Options{
 		Name:          "empty-api",
@@ -128,4 +123,92 @@ func TestTemplateCanBeGeneratedWithoutHello(t *testing.T) {
 			t.Fatalf("%s lost generator markers", rel)
 		}
 	}
+}
+
+func helloTemplateFixture(t *testing.T) string {
+	t.Helper()
+	root := t.TempDir()
+	files := map[string]string{
+		"app.go": `package main
+
+import "github.com/bartek5186/procyon/controllers"
+
+type application struct {
+	hello *controllers.HelloController
+}
+
+func newApplication() *application {
+	return &application{
+		hello: controllers.NewHelloController(),
+	}
+}
+
+// procyon:application
+`,
+		"routes.go": `package main
+
+func routes() {
+	securedAdmin := "admin"
+	app.hello.Register(securedAdmin)
+}
+
+// procyon:routes
+`,
+		"store/appStore.go": `package store
+
+type AppStore struct {
+	hello *HelloStore
+}
+
+func NewAppStore() *AppStore {
+	return &AppStore{
+		hello: NewHelloStore(),
+	}
+}
+
+func (s *AppStore) Hello() *HelloStore {
+	return s.hello
+}
+
+// procyon:store
+`,
+		"services/appService.go": `package services
+
+type AppService struct {
+	Hello string
+}
+
+// procyon:services
+`,
+		"internal/migrate.go": `package internal
+
+import "github.com/bartek5186/procyon/models"
+
+func migrationModels() []any {
+	return []any{
+		&models.HelloMessage{},
+	}
+}
+
+// procyon:migrations
+`,
+		"policies.go": `package main
+
+var policies = []struct{ Object string }{
+	{Object: "hello"},
+}
+
+// procyon:policies
+`,
+	}
+	for rel, contents := range files {
+		path := filepath.Join(root, rel)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(contents), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return root
 }
