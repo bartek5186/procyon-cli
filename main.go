@@ -95,7 +95,7 @@ func parseModuleCreateArgs(args []string) (modulegen.Options, error) {
 }
 
 func usage() {
-	fmt.Fprintf(os.Stderr, "usage:\n  procyon-cli init [flags]\n  procyon-cli module create <module_name> [--force]\n  procyon-cli module add <module_name> [flags]\n  procyon-cli module update <module_name> [flags]\n  procyon-cli module enable <module_name> [--dry-run]\n  procyon-cli module disable <module_name> [--dry-run]\n  procyon-cli module list\n  procyon-cli module info <module_name>\n  procyon-cli postman generate [flags]\n  procyon-cli postman sync [flags]\n  procyon-cli core update [--version v0.3.0] [--dry-run]\n  procyon-cli self-update [--version v0.3.4] [--dry-run]\n\n")
+	fmt.Fprintf(os.Stderr, "usage:\n  procyon-cli init [flags]\n  procyon-cli module create <module_name> [--force]\n  procyon-cli module add <module_name> [flags]\n  procyon-cli module update <module_name> [flags]\n  procyon-cli module enable <module_name> [--dry-run]\n  procyon-cli module disable <module_name> [--dry-run]\n  procyon-cli module list\n  procyon-cli module info <module_name>\n  procyon-cli postman generate [flags]\n  procyon-cli postman sync [flags]\n  procyon-cli core update [--version v0.4.0] [--dry-run]\n  procyon-cli self-update [--version v0.4.0] [--dry-run]\n\n")
 	fmt.Fprintf(os.Stderr, "examples:\n")
 	fmt.Fprintf(os.Stderr, "  procyon-cli init\n")
 	fmt.Fprintf(os.Stderr, "  procyon-cli init --name przyjazne-server --module github.com/acme/przyjazne-server --db postgres --out ../przyjazne-v2\n")
@@ -103,13 +103,13 @@ func usage() {
 	fmt.Fprintf(os.Stderr, "  procyon-cli module add payment-system --provider stripe\n")
 	fmt.Fprintf(os.Stderr, "  procyon-cli postman generate\n")
 	fmt.Fprintf(os.Stderr, "  procyon-cli postman sync\n")
-	fmt.Fprintf(os.Stderr, "  procyon-cli core update --version v0.3.0\n")
-	fmt.Fprintf(os.Stderr, "  procyon-cli self-update --version v0.3.4\n")
+	fmt.Fprintf(os.Stderr, "  procyon-cli core update --version v0.4.0\n")
+	fmt.Fprintf(os.Stderr, "  procyon-cli self-update --version v0.4.0\n")
 }
 
 func runCoreCommand(args []string) {
 	if len(args) == 0 || args[0] != "update" {
-		fmt.Fprintln(os.Stderr, "usage: procyon-cli core update [--version v0.3.0] [--dry-run]")
+		fmt.Fprintln(os.Stderr, "usage: procyon-cli core update [--version v0.4.0] [--dry-run]")
 		os.Exit(2)
 	}
 	runCoreUpdate(args[1:], "procyon-cli core update")

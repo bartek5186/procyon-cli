@@ -118,8 +118,8 @@ Explicit commands remain available for scripts and CI:
 
 ```bash
 procyon-cli init
-procyon-cli self-update --version v0.3.4
-procyon-cli core update --version v0.3.0
+procyon-cli self-update --version v0.4.0
+procyon-cli core update --version v0.4.0
 procyon-cli module list
 ```
 
@@ -264,7 +264,7 @@ procyon-cli module update payment-system --published
 ```
 
 The published update command resolves the latest version from the official
-registry. Pass `--version v0.3.2` only when an exact version is required.
+registry. Pass `--version v0.4.0` only when an exact version is required.
 
 A shared module contains a `procyon-module.json` next to its `go.mod`. The CLI
 adds it with `go get`, records the selected version and providers in
@@ -276,6 +276,11 @@ restores `.procyon.json`, `plugins_gen.go`, `go.mod`, and `go.sum` if validation
 fails. Plugins are linked into the application binary and can own routes,
 policies, migrations, services and persistence; no dynamic `.so` loading is
 used.
+
+New local plugin scaffolds also contain `events.go`. Register typed handlers
+there during plugin construction and publish through the shared bus supplied as
+`plugins.Dependencies.Events`. Event-aware plugins reject hosts without the bus
+instead of silently dropping events.
 
 Registry discovery order:
 
@@ -302,7 +307,7 @@ procyon-cli self-update
 Pin an exact CLI release when needed:
 
 ```bash
-procyon-cli self-update --version v0.3.4
+procyon-cli self-update --version v0.4.0
 ```
 
 For an npm installation the command runs `npm install --global
@@ -323,7 +328,7 @@ procyon-cli core update
 Pin a specific release when needed:
 
 ```bash
-procyon-cli core update --version v0.3.0
+procyon-cli core update --version v0.4.0
 ```
 
 The command runs `go get`, `go mod tidy`, and `go test ./...`. It updates the

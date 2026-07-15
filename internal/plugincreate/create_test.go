@@ -19,7 +19,7 @@ func TestCreateMinimalPlugin(t *testing.T) {
 	if result.Root != root {
 		t.Fatalf("Root = %q, want %q", result.Root, root)
 	}
-	for _, name := range []string{"go.mod", "plugin.go", "procyon-module.json", "README.md", "docs/postman/overview.md"} {
+	for _, name := range []string{"go.mod", "plugin.go", "events.go", "procyon-module.json", "README.md", "docs/postman/overview.md"} {
 		if _, err := os.Stat(filepath.Join(root, name)); err != nil {
 			t.Fatalf("missing %s: %v", name, err)
 		}
@@ -30,6 +30,9 @@ func TestCreateMinimalPlugin(t *testing.T) {
 	}
 	if !strings.Contains(string(plugin), "package auditlog") || !strings.Contains(string(plugin), `const Name = "audit-log"`) {
 		t.Fatalf("unexpected plugin source:\n%s", plugin)
+	}
+	if !strings.Contains(string(plugin), "dependencies.Events") || !strings.Contains(string(plugin), "registerEventHandlers") {
+		t.Fatalf("plugin does not wire the shared event bus:\n%s", plugin)
 	}
 }
 

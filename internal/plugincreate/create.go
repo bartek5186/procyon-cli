@@ -100,17 +100,27 @@ func Create(opts Options) (Result, error) {
 import (
 	"context"
 	"encoding/json"
+	"errors"
 
 	"github.com/bartek5186/procyon-core/authz"
+	coreevents "github.com/bartek5186/procyon-core/events"
 	coreplugins "github.com/bartek5186/procyon-core/plugins"
 )
 
 const Name = %q
 
-type Plugin struct{}
+type Plugin struct {
+	events *coreevents.Bus
+}
 
-func New(context.Context, coreplugins.Dependencies, json.RawMessage) (coreplugins.Plugin, error) {
-	return &Plugin{}, nil
+func New(_ context.Context, dependencies coreplugins.Dependencies, _ json.RawMessage) (coreplugins.Plugin, error) {
+	if dependencies.Events == nil {
+		return nil, errors.New(Name + " requires the Procyon event bus; update the application runtime wiring")
+	}
+	if err := registerEventHandlers(dependencies.Events); err != nil {
+		return nil, err
+	}
+	return &Plugin{events: dependencies.Events}, nil
 }
 
 func (*Plugin) Name() string                           { return Name }
@@ -133,8 +143,21 @@ var _ coreplugins.Plugin = (*Plugin)(nil)
 		)),
 		"procyon-module.json": manifestBody,
 		"plugin.go":           pluginBody,
+		"events.go": []byte(fmt.Sprintf(`package %s
+
+import coreevents "github.com/bartek5186/procyon-core/events"
+
+// registerEventHandlers installs this plugin's synchronous event consumers.
+// Keep handlers fast and idempotent; return an error to make a durable
+// publisher retry the source event.
+func registerEventHandlers(eventBus *coreevents.Bus) error {
+	_ = eventBus
+	// procyon:event-handlers
+	return nil
+}
+`, packageName)),
 		"README.md": []byte(fmt.Sprintf(
-			"# %s\n\nLocal Procyon plugin scaffold. Add business logic, routes, policies and migrations in this module.\n",
+			"# %s\n\nLocal Procyon plugin scaffold. Add business logic, routes, policies, migrations and typed event handlers in this module. Register handlers in `events.go`; publish through the shared bus stored by the plugin.\n",
 			opts.Name,
 		)),
 		"docs/postman/overview.md": []byte(fmt.Sprintf(
