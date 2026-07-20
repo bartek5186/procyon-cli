@@ -26,6 +26,53 @@ func TestCleanOutputDirPreservesCurrentDirectoryPrefix(t *testing.T) {
 	}
 }
 
+func TestGeneratedFilePathReplacesGenericPackageDocs(t *testing.T) {
+	tests := map[string]string{
+		"controllers/doc.go": "controllers/controller.go",
+		"models/doc.go":      "models/models.go",
+		"store/doc.go":       "store/doc.go",
+		"models/invoice.go":  "models/invoice.go",
+	}
+	for input, expected := range tests {
+		if got := filepath.ToSlash(generatedFilePath(filepath.FromSlash(input))); got != expected {
+			t.Errorf("generatedFilePath(%q) = %q, want %q", input, got, expected)
+		}
+	}
+}
+
+func TestCopyTemplateSkipsLegacyGeneratorDirectories(t *testing.T) {
+	source := t.TempDir()
+	destination := t.TempDir()
+	legacyFiles := map[string]string{
+		"scripts/generate-feature.sh": "#!/bin/sh\n",
+		"tools/postman-gen/main.go":   "package main\n",
+	}
+	for name, body := range legacyFiles {
+		path := filepath.Join(source, filepath.FromSlash(name))
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(source, "main.go"), []byte("package main\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := copyTemplate(source, destination, Options{IncludeDocker: true, IncludeHello: true}); err != nil {
+		t.Fatal(err)
+	}
+	for _, directory := range []string{"scripts", "tools"} {
+		if _, err := os.Stat(filepath.Join(destination, directory)); !os.IsNotExist(err) {
+			t.Fatalf("legacy %s directory should not be copied into generated projects", directory)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(destination, "main.go")); err != nil {
+		t.Fatalf("regular template file was not copied: %v", err)
+	}
+}
+
 func TestReplaceTextFilesKeepsCoreModuleAndRewritesTemplateModule(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, "go.mod")
@@ -123,6 +170,9 @@ func TestTemplateCanBeGeneratedWithoutHello(t *testing.T) {
 			t.Fatalf("%s lost generator markers", rel)
 		}
 	}
+	if _, err := os.Stat(filepath.Join(out, "routes_test.go")); !os.IsNotExist(err) {
+		t.Fatal("legacy hello-only routes_test.go should be removed when hello is disabled")
+	}
 }
 
 func TestRunGoModTidyIgnoresParentWorkspace(t *testing.T) {
@@ -178,6 +228,11 @@ func routes() {
 }
 
 // procyon:routes
+`,
+		"routes_test.go": `package main
+
+// Legacy hello-only route test from templates before it was renamed.
+// NewHelloController registers /admin/hello.
 `,
 		"store/appStore.go": `package store
 

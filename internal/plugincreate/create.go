@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"go/format"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -21,7 +22,19 @@ type Options struct {
 	OutputDir   string
 	CoreVersion string
 	CLIVersion  string
+	Minimal     bool
+	Controllers []Controller
 }
+
+type Controller string
+
+const (
+	ControllerHello   Controller = "hello"
+	ControllerExample Controller = "example"
+	ControllerAdmin   Controller = "admin"
+)
+
+var defaultControllers = []Controller{ControllerHello, ControllerExample, ControllerAdmin}
 
 type Result struct {
 	Root     string
@@ -57,6 +70,10 @@ func Create(opts Options) (Result, error) {
 	}
 	if strings.TrimSpace(opts.CoreVersion) == "" || opts.CoreVersion == "unknown" {
 		return Result{}, errors.New("cannot create a plugin without a known Procyon Core version")
+	}
+	controllers, err := normalizeControllers(opts.Controllers, opts.Minimal)
+	if err != nil {
+		return Result{}, err
 	}
 	root, err := filepath.Abs(opts.OutputDir)
 	if err != nil {
@@ -95,56 +112,17 @@ func Create(opts Options) (Result, error) {
 	manifestBody = append(manifestBody, '\n')
 
 	packageName := goPackageName(opts.Name)
-	pluginBody, err := format.Source([]byte(fmt.Sprintf(`package %s
-
-import (
-	"context"
-	"encoding/json"
-	"errors"
-
-	"github.com/bartek5186/procyon-core/authz"
-	coreevents "github.com/bartek5186/procyon-core/events"
-	coreplugins "github.com/bartek5186/procyon-core/plugins"
-)
-
-const Name = %q
-
-type Plugin struct {
-	events *coreevents.Bus
-}
-
-func New(_ context.Context, dependencies coreplugins.Dependencies, _ json.RawMessage) (coreplugins.Plugin, error) {
-	if dependencies.Events == nil {
-		return nil, errors.New(Name + " requires the Procyon event bus; update the application runtime wiring")
+	pluginSource := minimalPluginSource(packageName, opts.Name)
+	if !opts.Minimal {
+		pluginSource = fullPluginSource(packageName, opts.Name, opts.GoModule, controllers)
 	}
-	return &Plugin{events: dependencies.Events}, nil
-}
-
-func (*Plugin) Name() string                           { return Name }
-func (*Plugin) Migrate(context.Context) error          { return nil }
-func (*Plugin) Policies() []authz.Policy               { return nil }
-func (*Plugin) RegisterRoutes(coreplugins.Routes)      {}
-func (*Plugin) Shutdown(context.Context) error         { return nil }
-
-func (*Plugin) RegisterEvents(eventBus *coreevents.Bus) error {
-	return registerEventHandlers(eventBus)
-}
-
-var (
-	_ coreplugins.Plugin         = (*Plugin)(nil)
-	_ coreplugins.EventRegistrar = (*Plugin)(nil)
-)
-`, packageName, opts.Name)))
+	pluginBody, err := format.Source([]byte(pluginSource))
 	if err != nil {
 		return Result{}, fmt.Errorf("generate plugin.go: %w", err)
 	}
 
 	files := map[string][]byte{
-		"go.mod": []byte(fmt.Sprintf(
-			"module %s\n\ngo 1.26.0\n\nrequire github.com/bartek5186/procyon-core %s\n",
-			opts.GoModule,
-			normalizeVersion(opts.CoreVersion),
-		)),
+		"go.mod":              []byte(pluginGoMod(opts, !opts.Minimal)),
 		"procyon-module.json": manifestBody,
 		"plugin.go":           pluginBody,
 		"events.go": []byte(fmt.Sprintf(`package %s
@@ -159,9 +137,10 @@ func registerEventHandlers(eventBus *coreevents.Bus) error {
 	// procyon:event-handlers
 	return nil
 }
+
 `, packageName)),
 		"README.md": []byte(fmt.Sprintf(
-			"# %s\n\nLocal Procyon plugin scaffold. Add business logic, routes, policies, migrations and typed event handlers in this module. Register handlers in `events.go`; publish through the shared bus stored by the plugin.\n",
+			"# %s\n\nStandalone Procyon plugin scaffold. Add business logic, routes, policies, migrations and typed event handlers in this module. Register handlers in `events.go`; publish through the shared bus stored by the plugin.\n",
 			opts.Name,
 		)),
 		"docs/postman/overview.md": []byte(fmt.Sprintf(
@@ -169,10 +148,21 @@ func registerEventHandlers(eventBus *coreevents.Bus) error {
 			opts.Name,
 		)),
 	}
+	if !opts.Minimal {
+		for name, body := range fullBoilerplateFiles(packageName, opts.Name, opts.GoModule, controllers) {
+			files[name] = []byte(body)
+		}
+	}
 	for name, body := range files {
 		path := filepath.Join(root, name)
 		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 			return Result{}, err
+		}
+		if strings.HasSuffix(name, ".go") {
+			body, err = format.Source(body)
+			if err != nil {
+				return Result{}, fmt.Errorf("format %s: %w", name, err)
+			}
 		}
 		if err := os.WriteFile(path, body, 0o644); err != nil {
 			return Result{}, err
@@ -180,6 +170,58 @@ func registerEventHandlers(eventBus *coreevents.Bus) error {
 	}
 	committed = true
 	return Result{Root: root, Name: opts.Name, GoModule: opts.GoModule}, nil
+}
+
+// Prepare resolves and records the dependencies of a generated standalone
+// module. GOWORK is disabled so a parent Procyon workspace cannot accidentally
+// make the new module appear complete without its own go.sum file.
+func Prepare(root string) error {
+	command := exec.Command("go", "mod", "tidy")
+	command.Dir = root
+	command.Env = append(os.Environ(), "GOWORK=off")
+	if output, err := command.CombinedOutput(); err != nil {
+		return fmt.Errorf("prepare generated module: go mod tidy: %w\n%s", err, strings.TrimSpace(string(output)))
+	}
+	return nil
+}
+
+func normalizeControllers(values []Controller, minimal bool) ([]Controller, error) {
+	if minimal {
+		return nil, nil
+	}
+	if values == nil {
+		return append([]Controller(nil), defaultControllers...), nil
+	}
+	seen := make(map[Controller]bool, len(values))
+	result := make([]Controller, 0, len(values))
+	for _, value := range values {
+		switch value {
+		case ControllerHello, ControllerExample, ControllerAdmin:
+		default:
+			return nil, fmt.Errorf("unknown controller %q", value)
+		}
+		if !seen[value] {
+			seen[value] = true
+			result = append(result, value)
+		}
+	}
+	return result, nil
+}
+
+func pluginGoMod(opts Options, full bool) string {
+	if !full {
+		return fmt.Sprintf("module %s\n\ngo 1.26.0\n\nrequire github.com/bartek5186/procyon-core %s\n", opts.GoModule, normalizeVersion(opts.CoreVersion))
+	}
+	return fmt.Sprintf(`module %s
+
+go 1.26.0
+
+require (
+	github.com/bartek5186/procyon-core %s
+	github.com/labstack/echo/v4 v4.13.4
+	gorm.io/gorm v1.31.1
+)
+`, opts.GoModule, normalizeVersion(opts.CoreVersion))
 }
 
 func goPackageName(name string) string {

@@ -455,6 +455,37 @@ func promptCreateAndInstallPlugin(ctx Context) error {
 		return err
 	}
 	name = strings.TrimSpace(name)
+	scaffold := "full"
+	scaffoldForm := newForm(
+		huh.NewSelect[string]().
+			Title("Module boilerplate").
+			Description("The complete preset is runnable and demonstrates the usual Procyon layers.").
+			Options(
+				huh.NewOption("Complete example (recommended)", "full"),
+				huh.NewOption("Minimal plugin contract", "minimal"),
+			).
+			Value(&scaffold),
+	)
+	if err := runForm(scaffoldForm); err != nil {
+		return err
+	}
+	controllerNames := []string{"hello", "example", "admin"}
+	if scaffold == "full" {
+		controllerForm := newForm(
+			huh.NewMultiSelect[string]().
+				Title("Controllers to generate").
+				Description("Use Space to toggle controllers; an empty selection creates a service-only module.").
+				Options(
+					huh.NewOption("Public Hello — GET /"+name+"/hello", "hello"),
+					huh.NewOption("Authenticated Example CRUD — /"+name+"/examples", "example"),
+					huh.NewOption("Admin Stats — GET /"+name+"/stats", "admin"),
+				).
+				Value(&controllerNames),
+		)
+		if err := runForm(controllerForm); err != nil {
+			return err
+		}
+	}
 	goModule := strings.TrimSuffix(ctx.ProjectModule, "/") + "/plugins/" + name
 	outputDir := filepath.Join("plugins", name)
 	settingsForm := newForm(
@@ -470,14 +501,22 @@ func promptCreateAndInstallPlugin(ctx Context) error {
 	if err := runForm(settingsForm); err != nil {
 		return err
 	}
+	controllers := make([]plugincreate.Controller, 0, len(controllerNames))
+	for _, controller := range controllerNames {
+		controllers = append(controllers, plugincreate.Controller(controller))
+	}
 	result, err := plugincreate.Create(plugincreate.Options{
 		Name: name, GoModule: goModule, OutputDir: outputDir,
 		CoreVersion: ctx.CoreVersion, CLIVersion: buildinfo.CLIVersion,
+		Minimal: scaffold == "minimal", Controllers: controllers,
 	})
 	if err != nil {
 		return err
 	}
-	fmt.Fprintf(os.Stdout, "Created local plugin source in %s.\n", result.Root)
+	fmt.Fprintf(os.Stdout, "Created standalone plugin source in %s.\n", result.Root)
+	if err := plugincreate.Prepare(result.Root); err != nil {
+		return err
+	}
 	return moduleinstall.Run(moduleinstall.Options{
 		Name: result.Name, Source: result.Root, Writer: os.Stdout, Values: map[string]string{},
 	})

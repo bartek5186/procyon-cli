@@ -212,14 +212,37 @@ procyon-cli plugin create leagues
 ```
 
 The command creates `plugins/leagues/` with config, capabilities, events,
-versioned migrations, routes, worker lifecycle and the usual domain layers. It
-also updates `plugins_local.go`. It does not create a nested `go.mod`, publish a
-manifest, add a Go dependency or record the plugin in the shared module catalog.
+versioned migrations and worker lifecycle. It also generates a runnable public
+`GET /leagues/hello` route backed by `HelloController`, `HelloService` and a
+small `HelloStore`, plus response models and a service test. This gives new
+plugins a working end-to-end path that can be replaced with real business
+logic. A separate `domain/` package is not created until the plugin actually
+needs persistence-independent business rules.
+
+The command also updates `plugins_local.go`. It does not create a nested
+`go.mod`, publish a manifest, add a Go dependency or record the plugin in the
+shared module catalog.
 
 Project-owned factories and installed factories from `plugins_gen.go` are
 combined by the application. They use the same Procyon Core registry and are
 indistinguishable after compilation. The interactive dashboard exposes this as
 **Create a project-owned plugin**.
+
+The dashboard action **Create and install a standalone plugin** opens a
+boilerplate selector. The recommended complete preset creates a runnable
+example module with:
+
+- configuration and typed event contracts,
+- an `Example` model, repository and service,
+- a Core-managed versioned migration,
+- a service unit test and Postman documentation,
+- optional public `Hello`, authenticated `Example CRUD`, and admin `Stats`
+  controllers selected from a multi-select menu.
+
+The minimal preset keeps only the plugin contract, event registration and
+manifest. Generated standalone modules run `go mod tidy` with `GOWORK=off`, so
+they contain their own dependency checksums even when created below a parent Go
+workspace.
 
 ## Shared Modules
 

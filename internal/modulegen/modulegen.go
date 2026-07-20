@@ -99,6 +99,10 @@ func generatedFiles(spec moduleSpec) map[string]string {
 
 func validateModuleDoesNotExist(spec moduleSpec) error {
 	var hits []string
+	appPath, err := applicationCompositionFile()
+	if err != nil {
+		return err
+	}
 
 	for path := range generatedFiles(spec) {
 		if strings.Contains(path, spec.MigStamp) {
@@ -129,7 +133,7 @@ func validateModuleDoesNotExist(spec moduleSpec) error {
 		"services/appService.go": {
 			spec.Pascal + " *" + spec.Pascal + "Service",
 		},
-		"app.go": {
+		appPath: {
 			spec.Field + " *controllers." + spec.Pascal + "Controller",
 		},
 		"routes.go": {
@@ -167,7 +171,7 @@ func validateModuleDoesNotExist(spec moduleSpec) error {
 func validateProcyonProject() error {
 	required := []string{
 		"go.mod",
-		"app.go",
+		"main.go",
 		"routes.go",
 		"store/appStore.go",
 		"services/appService.go",
@@ -182,7 +186,18 @@ func validateProcyonProject() error {
 			return err
 		}
 	}
-	return nil
+	_, err := applicationCompositionFile()
+	return err
+}
+
+func applicationCompositionFile() (string, error) {
+	if fileExists("app.go") {
+		return "app.go", nil
+	}
+	if fileExists("main.go") {
+		return "main.go", nil
+	}
+	return "", errors.New("current directory does not contain app.go or main.go composition root")
 }
 
 func readGoModule() (string, error) {
@@ -288,7 +303,10 @@ func wireService(s moduleSpec) error {
 }
 
 func wireApp(s moduleSpec) error {
-	path := "app.go"
+	path, err := applicationCompositionFile()
+	if err != nil {
+		return err
+	}
 	return updateGoFile(path, func(src string) (string, error) {
 		var err error
 		src, err = ensureImport(src, s.Module+"/controllers")

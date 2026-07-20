@@ -41,7 +41,9 @@ var skipDirs = map[string]struct{}{
 	"build":       {},
 	"log":         {},
 	"procyon-cli": {},
+	"scripts":     {},
 	"tmp":         {},
+	"tools":       {},
 }
 
 func Run(opts Options) error {
@@ -99,13 +101,30 @@ func Run(opts Options) error {
 }
 
 func removeHelloWiring(root string) error {
+	legacyRoutesTest := filepath.Join(root, "routes_test.go")
+	if raw, err := os.ReadFile(legacyRoutesTest); err == nil {
+		source := string(raw)
+		if strings.Contains(source, "NewHelloController") && strings.Contains(source, "/admin/hello") {
+			if err := os.Remove(legacyRoutesTest); err != nil {
+				return err
+			}
+		}
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+
+	applicationFile := "app.go"
+	if !fileExists(filepath.Join(root, applicationFile)) {
+		applicationFile = "main.go"
+	}
 	lineRemovals := map[string][]string{
-		"app.go": {
+		applicationFile: {
 			"/controllers\"",
 			"hello *controllers.HelloController",
 			"hello: controllers.NewHelloController",
 		},
 		"routes.go": {
+			"e := routes.Public",
 			"app.hello.",
 			"securedAdmin :=",
 		},
@@ -342,7 +361,6 @@ func findTemplateRoot(wd string) (string, error) {
 func isTemplateRoot(dir string) bool {
 	return fileExists(filepath.Join(dir, "go.mod")) &&
 		fileExists(filepath.Join(dir, "main.go")) &&
-		fileExists(filepath.Join(dir, "app.go")) &&
 		fileExists(filepath.Join(dir, "policies.go")) &&
 		fileExists(filepath.Join(dir, "config", "config.example.json"))
 }
@@ -407,8 +425,19 @@ func copyTemplate(source, dest string, opts Options) error {
 		if err != nil {
 			return err
 		}
-		return copyFile(path, filepath.Join(dest, rel), info.Mode())
+		return copyFile(path, filepath.Join(dest, generatedFilePath(rel)), info.Mode())
 	})
+}
+
+func generatedFilePath(rel string) string {
+	switch filepath.ToSlash(rel) {
+	case "controllers/doc.go":
+		return filepath.FromSlash("controllers/controller.go")
+	case "models/doc.go":
+		return filepath.FromSlash("models/models.go")
+	default:
+		return rel
+	}
 }
 
 func shouldSkipFile(rel string, opts Options) bool {
