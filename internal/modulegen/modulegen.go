@@ -299,7 +299,7 @@ func wireApp(s moduleSpec) error {
 		if err != nil {
 			return "", err
 		}
-		src, err = insertAfter(src, "\t\t// procyon:module-controller-init", "\t\t"+s.Field+": controllers.New"+s.Pascal+"Controller(appService, logger.GetLogger()),")
+		src, err = insertAfter(src, "\t\t// procyon:module-controller-init", "\t\t"+s.Field+": controllers.New"+s.Pascal+"Controller(appService, dependencies.Logger),")
 		if err != nil {
 			return "", err
 		}
@@ -311,8 +311,8 @@ func wireRoutes(s moduleSpec) error {
 	path := "routes.go"
 	return updateGoFile(path, func(src string) (string, error) {
 		line := "\n\t" + s.Field + " := api.Group(\"" + s.Route + "\")\n" +
-			"\t" + s.Field + ".POST(\"\", app." + s.Field + ".Create, app.requirePermission(\"*\", \"" + s.Name + "\", \"manage\"))\n" +
-			"\t" + s.Field + ".GET(\"/:id\", app." + s.Field + ".GetByID, app.requirePermission(\"*\", \"" + s.Name + "\", \"read\"))"
+			"\t" + s.Field + ".POST(\"\", app." + s.Field + ".Create, routes.Require(\"*\", \"" + s.Name + "\", \"manage\"))\n" +
+			"\t" + s.Field + ".GET(\"/:id\", app." + s.Field + ".GetByID, routes.Require(\"*\", \"" + s.Name + "\", \"read\"))"
 		return insertAfter(src, "\t// procyon:api-routes", line)
 	})
 }

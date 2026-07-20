@@ -306,6 +306,44 @@ func registerUploadRoutes(e *Echo, app *application) {}
 	assertGeneratedRoute(t, routes, "GET", "/ping", "Ping")
 }
 
+func TestCollectRoutesSupportsRuntimeRouteGroups(t *testing.T) {
+	project := t.TempDir()
+	writePostmanTestFile(t, filepath.Join(project, "routes.go"), `package main
+func registerPublicRoutes(routes Routes, app *application) error {
+	e := routes.Public
+	e.GET("/health", app.health.Get)
+	api := routes.API
+	api.POST("/items", app.items.Create)
+	authenticated := routes.Authenticated
+	if authenticated != nil {
+		authenticated.GET("/profile", app.profile.Get)
+		admin := authenticated.Group("/admin")
+		admin.DELETE("/items/:id", app.items.Delete)
+	}
+	return nil
+}
+`)
+
+	generator := &generator{
+		root:        project,
+		fset:        token.NewFileSet(),
+		structs:     map[string]*ast.StructType{},
+		handlerBody: map[string]any{},
+		funcReturns: map[string][]ast.Expr{},
+	}
+	if err := generator.load(); err != nil {
+		t.Fatal(err)
+	}
+	routes := generator.collectRoutes()
+	if len(routes) != 4 {
+		t.Fatalf("routes = %d, want 4: %+v", len(routes), routes)
+	}
+	assertGeneratedRoute(t, routes, "GET", "/health", "Get")
+	assertGeneratedRoute(t, routes, "POST", "/v1/items", "Create")
+	assertGeneratedRoute(t, routes, "GET", "/v1/profile", "Get")
+	assertGeneratedRoute(t, routes, "DELETE", "/v1/admin/items/:id", "Delete")
+}
+
 func assertPluginRoute(t *testing.T, routes []route, method, path, authMode string, admin bool) {
 	t.Helper()
 	for _, item := range routes {
