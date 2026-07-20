@@ -637,7 +637,9 @@ func (g *generator) collectRoutes() []route {
 		walkStatements(fn.Body.List, env)
 	}
 
-	walkFunc("registerPublicRoutes", map[string]string{"e": ""}, false)
+	walkFunc("registerPublicRoutes", map[string]string{
+		"e": "", "api": "/v1", "authenticated": "/v1",
+	}, false)
 	walkFunc("registerAdminRoutes", map[string]string{"e": ""}, true)
 	walkFunc("registerUploadRoutes", map[string]string{"e": ""}, false)
 
