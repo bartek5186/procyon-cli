@@ -16,7 +16,8 @@ if (match[1] !== packageJSON.version) {
   throw new Error(`CLI version ${match[1]} does not match npm version ${packageJSON.version}`);
 }
 
-const tag = process.argv[2] || process.env.GITHUB_REF_NAME;
+const tag = process.argv[2]
+  || (process.env.GITHUB_REF_TYPE === 'tag' ? process.env.GITHUB_REF_NAME : undefined);
 if (tag && tag !== `v${packageJSON.version}`) {
   throw new Error(`Git tag ${tag} does not match npm version v${packageJSON.version}`);
 }
