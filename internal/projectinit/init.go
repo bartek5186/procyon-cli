@@ -91,13 +91,59 @@ func Run(opts Options) error {
 	if err := runGoModTidy(opts.OutputDir); err != nil {
 		return err
 	}
+	workspace, err := addToParentWorkspace(opts.OutputDir)
+	if err != nil {
+		return err
+	}
 
 	fmt.Fprintf(os.Stdout, "\nProject created in %s\n", opts.OutputDir)
+	if workspace != "" {
+		fmt.Fprintf(os.Stdout, "Added to Go workspace %s\n", workspace)
+	}
 	fmt.Fprintf(os.Stdout, "Next steps:\n")
 	fmt.Fprintf(os.Stdout, "  cd %s\n", opts.OutputDir)
 	fmt.Fprintf(os.Stdout, "  go run . -migrate=true\n")
 
 	return nil
+}
+
+// addToParentWorkspace makes a generated module immediately usable when its
+// output directory is nested below an existing go.work. Without this, Go sees
+// the parent workspace but rejects imports from the newly generated module
+// because that module is not listed in a use directive.
+func addToParentWorkspace(root string) (string, error) {
+	projectRoot, err := filepath.Abs(root)
+	if err != nil {
+		return "", err
+	}
+	workspaceDir := filepath.Dir(projectRoot)
+	for {
+		workspacePath := filepath.Join(workspaceDir, "go.work")
+		if info, statErr := os.Stat(workspacePath); statErr == nil && !info.IsDir() {
+			relativeProject, relErr := filepath.Rel(workspaceDir, projectRoot)
+			if relErr != nil {
+				return "", relErr
+			}
+			if relativeProject != "." && !strings.HasPrefix(relativeProject, "."+string(filepath.Separator)) {
+				relativeProject = "." + string(filepath.Separator) + relativeProject
+			}
+			command := exec.Command("go", "work", "use", relativeProject)
+			command.Dir = workspaceDir
+			command.Env = append(os.Environ(), "GOWORK="+workspacePath)
+			if output, commandErr := command.CombinedOutput(); commandErr != nil {
+				return "", fmt.Errorf("add generated project to Go workspace %s: %w: %s", workspacePath, commandErr, strings.TrimSpace(string(output)))
+			}
+			return workspacePath, nil
+		} else if statErr != nil && !os.IsNotExist(statErr) {
+			return "", statErr
+		}
+
+		parent := filepath.Dir(workspaceDir)
+		if parent == workspaceDir {
+			return "", nil
+		}
+		workspaceDir = parent
+	}
 }
 
 func removeHelloWiring(root string) error {

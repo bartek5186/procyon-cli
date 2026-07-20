@@ -196,6 +196,47 @@ func TestRunGoModTidyIgnoresParentWorkspace(t *testing.T) {
 	}
 }
 
+func TestAddToParentWorkspaceRegistersGeneratedModule(t *testing.T) {
+	parent := t.TempDir()
+	project := filepath.Join(parent, "generated-api")
+	if err := os.Mkdir(project, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	workspacePath := filepath.Join(parent, "go.work")
+	if err := os.WriteFile(workspacePath, []byte("go 1.26.0\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(project, "go.mod"), []byte("module example.com/generated-api\n\ngo 1.26.0\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := addToParentWorkspace(project)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != workspacePath {
+		t.Fatalf("workspace = %q, want %q", got, workspacePath)
+	}
+	raw, err := os.ReadFile(workspacePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), "./generated-api") {
+		t.Fatalf("generated module was not added to workspace:\n%s", raw)
+	}
+}
+
+func TestAddToParentWorkspaceDoesNothingWithoutWorkspace(t *testing.T) {
+	root := t.TempDir()
+	got, err := addToParentWorkspace(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "" {
+		t.Fatalf("workspace = %q, want empty", got)
+	}
+}
+
 func helloTemplateFixture(t *testing.T) string {
 	t.Helper()
 	root := t.TempDir()
