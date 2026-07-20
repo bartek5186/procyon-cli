@@ -668,16 +668,19 @@ type pluginRouteGroup struct {
 }
 
 func (g *generator) collectPluginRoutes() ([]route, error) {
+	var routes []route
+	seenNames := make(map[string]struct{})
+	installedSources := make(map[string]struct{})
+
 	content, err := os.ReadFile(filepath.Join(g.root, ".procyon.json"))
-	if os.IsNotExist(err) {
-		return nil, nil
-	}
-	if err != nil {
+	if err != nil && !os.IsNotExist(err) {
 		return nil, err
 	}
 	var metadata postmanProjectMetadata
-	if err := json.Unmarshal(content, &metadata); err != nil {
-		return nil, fmt.Errorf("parse .procyon.json for Postman plugins: %w", err)
+	if err == nil {
+		if decodeErr := json.Unmarshal(content, &metadata); decodeErr != nil {
+			return nil, fmt.Errorf("parse .procyon.json for Postman plugins: %w", decodeErr)
+		}
 	}
 	names := make([]string, 0, len(metadata.Modules))
 	for name, module := range metadata.Modules {
@@ -687,12 +690,15 @@ func (g *generator) collectPluginRoutes() ([]route, error) {
 	}
 	sort.Strings(names)
 
-	var routes []route
 	for _, name := range names {
+		seenNames[name] = struct{}{}
 		module := metadata.Modules[name]
 		source, err := g.pluginPackageDir(module)
 		if err != nil {
 			return nil, fmt.Errorf("resolve plugin %s for Postman: %w", name, err)
+		}
+		if absolute, err := filepath.Abs(source); err == nil {
+			installedSources[filepath.Clean(absolute)] = struct{}{}
 		}
 		if err := g.loadManualExamples(filepath.Join(source, "docs", "postman")); err != nil {
 			return nil, fmt.Errorf("load plugin %s Postman examples: %w", name, err)
@@ -710,6 +716,52 @@ func (g *generator) collectPluginRoutes() ([]route, error) {
 		pluginRoutes, err := collectRoutesFromPlugin(source, name)
 		if err != nil {
 			return nil, fmt.Errorf("collect plugin %s routes: %w", name, err)
+		}
+		routes = append(routes, pluginRoutes...)
+	}
+
+	localRoot := filepath.Join(g.root, "plugins")
+	entries, err := os.ReadDir(localRoot)
+	if err != nil && !os.IsNotExist(err) {
+		return nil, err
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+		if _, duplicate := seenNames[name]; duplicate {
+			return nil, fmt.Errorf("plugin %s exists as both local and installed", name)
+		}
+		source := filepath.Join(localRoot, name)
+		absoluteSource, err := filepath.Abs(source)
+		if err != nil {
+			return nil, err
+		}
+		if _, installed := installedSources[filepath.Clean(absoluteSource)]; installed {
+			continue
+		}
+		if _, err := os.Stat(filepath.Join(source, "plugin.go")); os.IsNotExist(err) {
+			continue
+		} else if err != nil {
+			return nil, err
+		}
+		if err := g.loadManualExamples(filepath.Join(source, "docs", "postman")); err != nil {
+			return nil, fmt.Errorf("load local plugin %s Postman examples: %w", name, err)
+		}
+		overview, err := loadPluginOverview(source)
+		if err != nil {
+			return nil, fmt.Errorf("load local plugin %s Postman overview: %w", name, err)
+		}
+		if overview != "" {
+			if g.folderDocs == nil {
+				g.folderDocs = map[string]string{}
+			}
+			g.folderDocs[titleForSegment(name)] = overview
+		}
+		pluginRoutes, err := collectRoutesFromPlugin(source, name)
+		if err != nil {
+			return nil, fmt.Errorf("collect local plugin %s routes: %w", name, err)
 		}
 		routes = append(routes, pluginRoutes...)
 	}

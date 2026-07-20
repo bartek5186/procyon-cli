@@ -111,7 +111,7 @@ func TestTemplateCanBeGeneratedWithoutHello(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	for _, rel := range []string{"app.go", "routes.go", "store/appStore.go", "services/appService.go", "internal/migrate.go", "policies.go"} {
+	for _, rel := range []string{"app.go", "routes.go", "plugins_local.go", "store/appStore.go", "services/appService.go", "internal/migrate.go", "policies.go"} {
 		raw, err := os.ReadFile(filepath.Join(out, rel))
 		if err != nil {
 			t.Fatal(err)
@@ -129,6 +129,10 @@ func helloTemplateFixture(t *testing.T) string {
 	t.Helper()
 	root := t.TempDir()
 	files := map[string]string{
+		"plugins_local.go": `package main
+
+// procyon:local-plugin-registrations
+`,
 		"app.go": `package main
 
 import "github.com/bartek5186/procyon/controllers"

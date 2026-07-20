@@ -118,8 +118,8 @@ Explicit commands remain available for scripts and CI:
 
 ```bash
 procyon-cli init
-procyon-cli self-update --version v0.4.0
-procyon-cli core update --version v0.4.0
+procyon-cli self-update --version v0.5.0
+procyon-cli core update --version v0.5.0
 procyon-cli module list
 ```
 
@@ -203,6 +203,24 @@ The command fails if the module already exists or is already wired into the proj
 procyon-cli module create invoice --force
 ```
 
+## Project-owned Plugins
+
+Create a private plugin inside the current project:
+
+```bash
+procyon-cli plugin create leagues
+```
+
+The command creates `plugins/leagues/` with config, capabilities, events,
+versioned migrations, routes, worker lifecycle and the usual domain layers. It
+also updates `plugins_local.go`. It does not create a nested `go.mod`, publish a
+manifest, add a Go dependency or record the plugin in the shared module catalog.
+
+Project-owned factories and installed factories from `plugins_gen.go` are
+combined by the application. They use the same Procyon Core registry and are
+indistinguishable after compilation. The interactive dashboard exposes this as
+**Create a project-owned plugin**.
+
 ## Shared Modules
 
 `module create` generates application-owned CRUD code. Complete reusable
@@ -264,7 +282,7 @@ procyon-cli module update payment-system --published
 ```
 
 The published update command resolves the latest version from the official
-registry. Pass `--version v0.4.0` only when an exact version is required.
+registry. Pass `--version v0.5.0` only when an exact version is required.
 
 A shared module contains a `procyon-module.json` next to its `go.mod`. The CLI
 adds it with `go get`, records the selected version and providers in
@@ -277,8 +295,8 @@ fails. Plugins are linked into the application binary and can own routes,
 policies, migrations, services and persistence; no dynamic `.so` loading is
 used.
 
-New local plugin scaffolds also contain `events.go`. Register typed handlers
-there during plugin construction and publish through the shared bus supplied as
+Standalone plugin scaffolds also contain `events.go`. Register typed handlers
+there through `RegisterEvents` and publish through the shared bus supplied as
 `plugins.Dependencies.Events`. Event-aware plugins reject hosts without the bus
 instead of silently dropping events.
 
@@ -307,7 +325,7 @@ procyon-cli self-update
 Pin an exact CLI release when needed:
 
 ```bash
-procyon-cli self-update --version v0.4.0
+procyon-cli self-update --version v0.5.0
 ```
 
 For an npm installation the command runs `npm install --global
@@ -328,7 +346,7 @@ procyon-cli core update
 Pin a specific release when needed:
 
 ```bash
-procyon-cli core update --version v0.4.0
+procyon-cli core update --version v0.5.0
 ```
 
 The command runs `go get`, `go mod tidy`, and `go test ./...`. It updates the

@@ -31,7 +31,7 @@ func TestCreateMinimalPlugin(t *testing.T) {
 	if !strings.Contains(string(plugin), "package auditlog") || !strings.Contains(string(plugin), `const Name = "audit-log"`) {
 		t.Fatalf("unexpected plugin source:\n%s", plugin)
 	}
-	if !strings.Contains(string(plugin), "dependencies.Events") || !strings.Contains(string(plugin), "registerEventHandlers") {
+	if !strings.Contains(string(plugin), "dependencies.Events") || !strings.Contains(string(plugin), "RegisterEvents") {
 		t.Fatalf("plugin does not wire the shared event bus:\n%s", plugin)
 	}
 }

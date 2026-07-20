@@ -172,6 +172,30 @@ func TestCollectPluginRoutesWithoutMetadataReturnsNoRoutes(t *testing.T) {
 	}
 }
 
+func TestCollectLocalPluginRoutesWithoutProjectMetadata(t *testing.T) {
+	project := t.TempDir()
+	plugin := filepath.Join(project, "plugins", "leagues")
+	writePostmanTestFile(t, filepath.Join(plugin, "plugin.go"), `package leagues
+
+type Plugin struct{}
+
+func (*Plugin) RegisterRoutes(routes Routes) {
+	routes.Public.GET("/leagues", listLeagues)
+}
+`)
+	routes, err := (&generator{root: project}).collectPluginRoutes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(routes) != 1 {
+		t.Fatalf("routes = %d, want 1: %+v", len(routes), routes)
+	}
+	assertPluginRoute(t, routes, "GET", "/v1/leagues", routeAuthPublic, false)
+	if routes[0].Folder != "Leagues" {
+		t.Fatalf("folder = %q", routes[0].Folder)
+	}
+}
+
 func TestCollectPluginRoutesSkipsDisabledPlugin(t *testing.T) {
 	project := t.TempDir()
 	writePostmanTestFile(t, filepath.Join(project, ".procyon.json"), `{

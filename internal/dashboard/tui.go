@@ -10,6 +10,7 @@ import (
 
 	"charm.land/huh/v2"
 	"github.com/bartek5186/procyon-cli/internal/buildinfo"
+	"github.com/bartek5186/procyon-cli/internal/localplugin"
 	"github.com/bartek5186/procyon-cli/internal/moduleinstall"
 	"github.com/bartek5186/procyon-cli/internal/plugincreate"
 	"github.com/bartek5186/procyon-cli/internal/postmangen"
@@ -124,6 +125,8 @@ func runProjectMenu(ctx Context) error {
 			return promptAndAddPlugin(ctx)
 		case "create_plugin":
 			return promptCreateAndInstallPlugin(ctx)
+		case "create_local_plugin":
+			return promptCreateLocalPlugin()
 		case "enable_plugin":
 			return promptSetPluginEnabled(ctx, true)
 		case "disable_plugin":
@@ -151,7 +154,8 @@ func runProjectMenu(ctx Context) error {
 func projectActionOptions(ctx Context, updates []pluginUpdate) []huh.Option[string] {
 	options := []huh.Option[string]{
 		huh.NewOption("Add a published plugin", "add_plugin"),
-		huh.NewOption("Create a local plugin for development", "create_plugin"),
+		huh.NewOption("Create a project-owned plugin", "create_local_plugin"),
+		huh.NewOption("Create and install a standalone plugin", "create_plugin"),
 	}
 	hasEnabled, hasDisabled := false, false
 	for _, module := range ctx.Modules {
@@ -175,6 +179,26 @@ func projectActionOptions(ctx Context, updates []pluginUpdate) []huh.Option[stri
 		huh.NewOption("Update Procyon CLI", "self_update"),
 		huh.NewOption("Exit", "exit"),
 	)
+}
+
+func promptCreateLocalPlugin() error {
+	name := ""
+	form := newForm(
+		huh.NewInput().
+			Title("Project-owned plugin name").
+			Description("Use kebab-case, for example leagues or audit-log.").
+			Value(&name).
+			Validate(func(value string) error {
+				if strings.TrimSpace(value) == "" {
+					return errors.New("plugin name is required")
+				}
+				return nil
+			}),
+	)
+	if err := runForm(form); err != nil {
+		return err
+	}
+	return localplugin.Create(localplugin.Options{Name: strings.TrimSpace(name)})
 }
 
 func generatePostmanCollection(ctx Context) error {

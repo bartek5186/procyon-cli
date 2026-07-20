@@ -117,9 +117,6 @@ func New(_ context.Context, dependencies coreplugins.Dependencies, _ json.RawMes
 	if dependencies.Events == nil {
 		return nil, errors.New(Name + " requires the Procyon event bus; update the application runtime wiring")
 	}
-	if err := registerEventHandlers(dependencies.Events); err != nil {
-		return nil, err
-	}
 	return &Plugin{events: dependencies.Events}, nil
 }
 
@@ -129,7 +126,14 @@ func (*Plugin) Policies() []authz.Policy               { return nil }
 func (*Plugin) RegisterRoutes(coreplugins.Routes)      {}
 func (*Plugin) Shutdown(context.Context) error         { return nil }
 
-var _ coreplugins.Plugin = (*Plugin)(nil)
+func (*Plugin) RegisterEvents(eventBus *coreevents.Bus) error {
+	return registerEventHandlers(eventBus)
+}
+
+var (
+	_ coreplugins.Plugin         = (*Plugin)(nil)
+	_ coreplugins.EventRegistrar = (*Plugin)(nil)
+)
 `, packageName, opts.Name)))
 	if err != nil {
 		return Result{}, fmt.Errorf("generate plugin.go: %w", err)
