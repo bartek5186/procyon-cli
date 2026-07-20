@@ -86,6 +86,9 @@ func Run(opts Options) error {
 	if err := runGofmt(opts.OutputDir); err != nil {
 		return err
 	}
+	if err := runGoModTidy(opts.OutputDir); err != nil {
+		return err
+	}
 
 	fmt.Fprintf(os.Stdout, "\nProject created in %s\n", opts.OutputDir)
 	fmt.Fprintf(os.Stdout, "Next steps:\n")
@@ -605,6 +608,16 @@ func runGofmt(root string) error {
 	}
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("gofmt: %w: %s", err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+func runGoModTidy(root string) error {
+	cmd := exec.Command("go", "mod", "tidy")
+	cmd.Dir = root
+	cmd.Env = append(os.Environ(), "GOWORK=off")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("go mod tidy: %w: %s", err, strings.TrimSpace(string(out)))
 	}
 	return nil
 }

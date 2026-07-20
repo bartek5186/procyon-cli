@@ -125,6 +125,27 @@ func TestTemplateCanBeGeneratedWithoutHello(t *testing.T) {
 	}
 }
 
+func TestRunGoModTidyIgnoresParentWorkspace(t *testing.T) {
+	parent := t.TempDir()
+	project := filepath.Join(parent, "project")
+	if err := os.Mkdir(project, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(parent, "go.work"), []byte("not a valid workspace\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(project, "go.mod"), []byte("module example.com/generated\n\ngo 1.26.0\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(project, "main.go"), []byte("package main\n\nfunc main() {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := runGoModTidy(project); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func helloTemplateFixture(t *testing.T) string {
 	t.Helper()
 	root := t.TempDir()
