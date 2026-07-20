@@ -44,7 +44,7 @@ func localPluginFactories() []coreplugins.Registration {
 	}
 	for _, path := range []string{
 		"plugin.go", "config.go", "capabilities.go", "events.go", "migrations.go", "routes.go", "start.go",
-		"contracts/hello.go", "models/hello.go", "store/hello.go", "services/hello.go", "services/hello_test.go", "controllers/hello.go",
+		"models/models.go", "store/store.go", "services/service.go", "services/service_test.go", "controllers/controller.go",
 		"docs/postman/overview.md",
 	} {
 		if _, err := os.Stat(filepath.Join("plugins", "audit-log", path)); err != nil {
@@ -54,15 +54,17 @@ func localPluginFactories() []coreplugins.Registration {
 	if _, err := os.Stat(filepath.Join("plugins", "audit-log", "go.mod")); !os.IsNotExist(err) {
 		t.Fatalf("local plugin must not have go.mod")
 	}
-	if _, err := os.Stat(filepath.Join("plugins", "audit-log", "domain")); !os.IsNotExist(err) {
-		t.Fatal("the runnable hello scaffold should not create an unexplained domain directory")
+	for _, directory := range []string{"contracts", "domain"} {
+		if _, err := os.Stat(filepath.Join("plugins", "audit-log", directory)); !os.IsNotExist(err) {
+			t.Fatalf("the base scaffold should not create an unused %s directory", directory)
+		}
 	}
 	for path, expected := range map[string][]string{
-		"plugin.go":            {"controllers.NewHelloController", "services.NewHelloService", "store.NewHelloStore"},
-		"routes.go":            {`routes.Public.GET("/audit-log/hello", p.hello.Hello)`},
-		"store/hello.go":       {"func (s *HelloStore) Message(context.Context) (string, error)"},
-		"services/hello.go":    {"s.store.Message(ctx)", `Plugin: "audit-log"`},
-		"controllers/hello.go": {"c.service.Hello(ctx.Request().Context())", "http.StatusOK"},
+		"plugin.go":                 {"controllers.NewController", "services.NewService", "store.NewStore"},
+		"routes.go":                 {`routes.Public.GET("/audit-log", p.controller.Status)`},
+		"store/store.go":            {"func (s *Store) Status(context.Context) (string, error)"},
+		"services/service.go":       {"s.store.Status(ctx)", `Plugin: "audit-log"`},
+		"controllers/controller.go": {"c.service.Status(ctx.Request().Context())", "http.StatusOK"},
 	} {
 		raw, err := os.ReadFile(filepath.Join("plugins", "audit-log", path))
 		if err != nil {

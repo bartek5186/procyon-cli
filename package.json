@@ -1,6 +1,6 @@
 {
   "name": "procyon-cli",
-  "version": "0.7.0",
+  "version": "0.7.1",
   "description": "Command-line tools for creating and maintaining Procyon Go backends",
   "keywords": [
     "procyon",

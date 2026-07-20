@@ -124,9 +124,7 @@ func runProjectMenu(ctx Context) error {
 		case "add_plugin":
 			return promptAndAddPlugin(ctx)
 		case "create_plugin":
-			return promptCreateAndInstallPlugin(ctx)
-		case "create_local_plugin":
-			return promptCreateLocalPlugin()
+			return promptCreatePlugin(ctx)
 		case "enable_plugin":
 			return promptSetPluginEnabled(ctx, true)
 		case "disable_plugin":
@@ -154,8 +152,7 @@ func runProjectMenu(ctx Context) error {
 func projectActionOptions(ctx Context, updates []pluginUpdate) []huh.Option[string] {
 	options := []huh.Option[string]{
 		huh.NewOption("Add a published plugin", "add_plugin"),
-		huh.NewOption("Create a project-owned plugin", "create_local_plugin"),
-		huh.NewOption("Create and install a standalone plugin", "create_plugin"),
+		huh.NewOption("Create plugin", "create_plugin"),
 	}
 	hasEnabled, hasDisabled := false, false
 	for _, module := range ctx.Modules {
@@ -179,6 +176,27 @@ func projectActionOptions(ctx Context, updates []pluginUpdate) []huh.Option[stri
 		huh.NewOption("Update Procyon CLI", "self_update"),
 		huh.NewOption("Exit", "exit"),
 	)
+}
+
+func promptCreatePlugin(ctx Context) error {
+	pluginType := "project"
+	form := newForm(
+		huh.NewSelect[string]().
+			Title("Plugin type").
+			Description("Choose whether the plugin belongs only to this project or is a separately versioned module.").
+			Options(
+				huh.NewOption("Project-owned — part of this project (recommended)", "project"),
+				huh.NewOption("Standalone reusable — separate Go module", "standalone"),
+			).
+			Value(&pluginType),
+	)
+	if err := runForm(form); err != nil {
+		return err
+	}
+	if pluginType == "standalone" {
+		return promptCreateStandalonePlugin(ctx)
+	}
+	return promptCreateLocalPlugin()
 }
 
 func promptCreateLocalPlugin() error {
@@ -437,7 +455,7 @@ func providerDisplayName(provider string) string {
 	}
 }
 
-func promptCreateAndInstallPlugin(ctx Context) error {
+func promptCreateStandalonePlugin(ctx Context) error {
 	name := ""
 	nameForm := newForm(
 		huh.NewInput().
@@ -459,9 +477,9 @@ func promptCreateAndInstallPlugin(ctx Context) error {
 	scaffoldForm := newForm(
 		huh.NewSelect[string]().
 			Title("Module boilerplate").
-			Description("The complete preset is runnable and demonstrates the usual Procyon layers.").
+			Description("The complete preset is runnable and provides the usual Procyon layers.").
 			Options(
-				huh.NewOption("Complete example (recommended)", "full"),
+				huh.NewOption("Complete boilerplate (recommended)", "full"),
 				huh.NewOption("Minimal plugin contract", "minimal"),
 			).
 			Value(&scaffold),
@@ -469,15 +487,15 @@ func promptCreateAndInstallPlugin(ctx Context) error {
 	if err := runForm(scaffoldForm); err != nil {
 		return err
 	}
-	controllerNames := []string{"hello", "example", "admin"}
+	controllerNames := []string{"status", "records", "admin"}
 	if scaffold == "full" {
 		controllerForm := newForm(
 			huh.NewMultiSelect[string]().
-				Title("Controllers to generate").
-				Description("Use Space to toggle controllers; an empty selection creates a service-only module.").
+				Title("HTTP surfaces to expose").
+				Description("Use Space to toggle routes; an empty selection creates a service-only module.").
 				Options(
-					huh.NewOption("Public Hello — GET /"+name+"/hello", "hello"),
-					huh.NewOption("Authenticated Example CRUD — /"+name+"/examples", "example"),
+					huh.NewOption("Public status — GET /"+name, "status"),
+					huh.NewOption("Authenticated records — /"+name+"/records", "records"),
 					huh.NewOption("Admin Stats — GET /"+name+"/stats", "admin"),
 				).
 				Value(&controllerNames),

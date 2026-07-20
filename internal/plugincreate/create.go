@@ -29,12 +29,12 @@ type Options struct {
 type Controller string
 
 const (
-	ControllerHello   Controller = "hello"
-	ControllerExample Controller = "example"
+	ControllerStatus  Controller = "status"
+	ControllerRecords Controller = "records"
 	ControllerAdmin   Controller = "admin"
 )
 
-var defaultControllers = []Controller{ControllerHello, ControllerExample, ControllerAdmin}
+var defaultControllers = []Controller{ControllerStatus, ControllerRecords, ControllerAdmin}
 
 type Result struct {
 	Root     string
@@ -196,7 +196,7 @@ func normalizeControllers(values []Controller, minimal bool) ([]Controller, erro
 	result := make([]Controller, 0, len(values))
 	for _, value := range values {
 		switch value {
-		case ControllerHello, ControllerExample, ControllerAdmin:
+		case ControllerStatus, ControllerRecords, ControllerAdmin:
 		default:
 			return nil, fmt.Errorf("unknown controller %q", value)
 		}

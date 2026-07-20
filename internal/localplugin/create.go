@@ -69,8 +69,8 @@ func Create(opts Options) error {
 	}
 	committed = true
 	fmt.Printf("created local plugin %s in %s\n", name, root)
-	fmt.Printf("route: GET /v1/%s/hello\n", name)
-	fmt.Println("next: replace the hello example with the plugin's business logic")
+	fmt.Printf("route: GET /v1/%s\n", name)
+	fmt.Println("next: replace the status scaffold with the plugin's business logic")
 	return nil
 }
 
@@ -97,7 +97,7 @@ type Plugin struct {
 	config       Config
 	events       *coreevents.Bus
 	capabilities *coreplugins.CapabilityRegistry
-	hello        *controllers.HelloController
+	controller   *controllers.Controller
 }
 
 func New(_ context.Context, dependencies coreplugins.Dependencies, raw json.RawMessage) (coreplugins.Plugin, error) {
@@ -105,11 +105,11 @@ func New(_ context.Context, dependencies coreplugins.Dependencies, raw json.RawM
 	if err != nil {
 		return nil, fmt.Errorf("configure %%s: %%w", Name, err)
 	}
-	helloStore := store.NewHelloStore(config.Greeting)
-	helloService := services.NewHelloService(helloStore)
+	pluginStore := store.NewStore(config.StatusMessage)
+	pluginService := services.NewService(pluginStore)
 	return &Plugin{
 		dependencies: dependencies, config: config, events: dependencies.Events, capabilities: dependencies.Capabilities,
-		hello: controllers.NewHelloController(helloService),
+		controller: controllers.NewController(pluginService),
 	}, nil
 }
 
@@ -137,24 +137,24 @@ import (
 )
 
 type Config struct {
-	Enabled  *bool  `+"`json:\"enabled\"`"+`
-	Greeting string `+"`json:\"greeting\"`"+`
+	Enabled       *bool  `+"`json:\"enabled\"`"+`
+	StatusMessage string `+"`json:\"status_message\"`"+`
 }
 
 func parseConfig(raw json.RawMessage) (Config, error) {
-	config := Config{Greeting: %q}
+	config := Config{StatusMessage: %q}
 	if len(raw) != 0 {
 		if err := json.Unmarshal(raw, &config); err != nil {
 			return Config{}, err
 		}
 	}
-	config.Greeting = strings.TrimSpace(config.Greeting)
-	if config.Greeting == "" {
-		config.Greeting = %q
+	config.StatusMessage = strings.TrimSpace(config.StatusMessage)
+	if config.StatusMessage == "" {
+		config.StatusMessage = %q
 	}
 	return config, nil
 }
-`, packageName, "hello from "+name, "hello from "+name)
+`, packageName, name+" is running", name+" is running")
 
 	return map[string]string{
 		"plugin.go": plugin,
@@ -191,10 +191,10 @@ import coreplugins "github.com/bartek5186/procyon-core/plugins"
 
 func (p *Plugin) RegisterRoutes(routes coreplugins.Routes) {
 	if routes.Public != nil {
-		routes.Public.GET(%q, p.hello.Hello)
+		routes.Public.GET(%q, p.controller.Status)
 	}
 }
-`, packageName, "/"+name+"/hello"),
+`, packageName, "/"+name),
 		"start.go": fmt.Sprintf(`package %s
 
 import "context"
@@ -205,28 +205,24 @@ func (p *Plugin) Start(ctx context.Context) error {
 	return nil
 }
 `, packageName),
-		"contracts/hello.go": fmt.Sprintf(`package contracts
+		"models/models.go": `package models
 
-const HelloRoute = %q
-`, "/"+name+"/hello"),
-		"models/hello.go": `package models
-
-type HelloResponse struct {
-	Message string ` + "`json:\"message\"`" + `
-	Plugin  string ` + "`json:\"plugin\"`" + `
+type StatusResponse struct {
+	Plugin string ` + "`json:\"plugin\"`" + `
+	Status string ` + "`json:\"status\"`" + `
 }
 `,
-		"store/hello.go": fmt.Sprintf(`package store
+		"store/store.go": `package store
 
 import "context"
 
-type HelloStore struct { message string }
+type Store struct { status string }
 
-func NewHelloStore(message string) *HelloStore { return &HelloStore{message: message} }
+func NewStore(status string) *Store { return &Store{status: status} }
 
-func (s *HelloStore) Message(context.Context) (string, error) { return s.message, nil }
-`),
-		"services/hello.go": fmt.Sprintf(`package services
+func (s *Store) Status(context.Context) (string, error) { return s.status, nil }
+`,
+		"services/service.go": fmt.Sprintf(`package services
 
 import (
 	"context"
@@ -235,16 +231,16 @@ import (
 	%q
 )
 
-type HelloService struct { store *store.HelloStore }
+type Service struct { store *store.Store }
 
-func NewHelloService(store *store.HelloStore) *HelloService { return &HelloService{store: store} }
+func NewService(store *store.Store) *Service { return &Service{store: store} }
 
-func (s *HelloService) Hello(ctx context.Context) (models.HelloResponse, error) {
-	message, err := s.store.Message(ctx)
-	return models.HelloResponse{Message: message, Plugin: %q}, err
+func (s *Service) Status(ctx context.Context) (models.StatusResponse, error) {
+	status, err := s.store.Status(ctx)
+	return models.StatusResponse{Plugin: %q, Status: status}, err
 }
 `, module+"/plugins/"+name+"/models", module+"/plugins/"+name+"/store", name),
-		"services/hello_test.go": fmt.Sprintf(`package services
+		"services/service_test.go": fmt.Sprintf(`package services
 
 import (
 	"context"
@@ -253,16 +249,16 @@ import (
 	%q
 )
 
-func TestHelloReturnsStoreMessage(t *testing.T) {
-	service := NewHelloService(store.NewHelloStore("hello test"))
-	response, err := service.Hello(context.Background())
+func TestStatusReturnsStoreValue(t *testing.T) {
+	service := NewService(store.NewStore("ready"))
+	response, err := service.Status(context.Background())
 	if err != nil { t.Fatal(err) }
-	if response.Message != "hello test" || response.Plugin != %q {
+	if response.Status != "ready" || response.Plugin != %q {
 		t.Fatalf("unexpected response: %%+v", response)
 	}
 }
 `, module+"/plugins/"+name+"/store", name),
-		"controllers/hello.go": fmt.Sprintf(`package controllers
+		"controllers/controller.go": fmt.Sprintf(`package controllers
 
 import (
 	"net/http"
@@ -271,19 +267,19 @@ import (
 	"github.com/labstack/echo/v4"
 )
 
-type HelloController struct { service *services.HelloService }
+type Controller struct { service *services.Service }
 
-func NewHelloController(service *services.HelloService) *HelloController {
-	return &HelloController{service: service}
+func NewController(service *services.Service) *Controller {
+	return &Controller{service: service}
 }
 
-func (c *HelloController) Hello(ctx echo.Context) error {
-	response, err := c.service.Hello(ctx.Request().Context())
+func (c *Controller) Status(ctx echo.Context) error {
+	response, err := c.service.Status(ctx.Request().Context())
 	if err != nil { return err }
 	return ctx.JSON(http.StatusOK, response)
 }
 `, module+"/plugins/"+name+"/services"),
-		"docs/postman/overview.md": fmt.Sprintf("The `%s` plugin is private to this project. Its runnable example endpoint is `GET /%s/hello`.\n", name, name),
+		"docs/postman/overview.md": fmt.Sprintf("The `%s` plugin is private to this project. Its initial status endpoint is `GET /%s`.\n", name, name),
 	}
 }
 

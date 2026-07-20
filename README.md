@@ -212,12 +212,13 @@ procyon-cli plugin create leagues
 ```
 
 The command creates `plugins/leagues/` with config, capabilities, events,
-versioned migrations and worker lifecycle. It also generates a runnable public
-`GET /leagues/hello` route backed by `HelloController`, `HelloService` and a
-small `HelloStore`, plus response models and a service test. This gives new
-plugins a working end-to-end path that can be replaced with real business
-logic. A separate `domain/` package is not created until the plugin actually
-needs persistence-independent business rules.
+versioned migrations and worker lifecycle. It also generates a neutral,
+runnable `GET /leagues` status route backed by `controllers/controller.go`,
+`services/service.go` and `store/store.go`, plus `models/models.go` and a service
+test. This gives new plugins a working end-to-end path without inventing a
+`hello` feature. Separate `contracts/` and `domain/` packages are not created
+until the plugin actually needs stable cross-plugin contracts or
+persistence-independent business rules.
 
 The command also updates `plugins_local.go`. It does not create a nested
 `go.mod`, publish a manifest, add a Go dependency or record the plugin in the
@@ -225,19 +226,24 @@ shared module catalog.
 
 Project-owned factories and installed factories from `plugins_gen.go` are
 combined by the application. They use the same Procyon Core registry and are
-indistinguishable after compilation. The interactive dashboard exposes this as
-**Create a project-owned plugin**.
+indistinguishable after compilation.
 
-The dashboard action **Create and install a standalone plugin** opens a
-boilerplate selector. The recommended complete preset creates a runnable
-example module with:
+The dashboard exposes one **Create plugin** action and then asks for ownership:
+
+- **Project-owned** creates source directly in the current project without a
+  nested module or manifest.
+- **Standalone reusable** creates and installs a separately versioned Go module
+  with `procyon-module.json`.
+
+The standalone path then opens a boilerplate selector. The recommended complete
+preset creates a runnable, domain-neutral module with:
 
 - configuration and typed event contracts,
-- an `Example` model, repository and service,
+- a neutral `Record` model, repository and service intended to be renamed,
 - a Core-managed versioned migration,
 - a service unit test and Postman documentation,
-- optional public `Hello`, authenticated `Example CRUD`, and admin `Stats`
-  controllers selected from a multi-select menu.
+- optional public status, authenticated record operations, and admin statistics
+  routes selected from a multi-select menu and wired through one controller.
 
 The minimal preset keeps only the plugin contract, event registration and
 manifest. Generated standalone modules run `go mod tidy` with `GOWORK=off`, so

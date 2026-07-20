@@ -75,6 +75,25 @@ func TestProjectActionsOfferPluginUpdateWhenAvailable(t *testing.T) {
 	t.Fatal("missing update_plugin action")
 }
 
+func TestProjectActionsExposeOnePluginCreationEntry(t *testing.T) {
+	options := projectActionOptions(Context{}, nil)
+	count := 0
+	for _, option := range options {
+		if option.Value == "create_plugin" {
+			count++
+			if option.Key != "Create plugin" {
+				t.Fatalf("unexpected create plugin label %q", option.Key)
+			}
+		}
+		if option.Value == "create_local_plugin" {
+			t.Fatal("legacy project-owned creation action is still exposed")
+		}
+	}
+	if count != 1 {
+		t.Fatalf("create plugin actions = %d, want 1", count)
+	}
+}
+
 func TestProjectActionsIncludePostmanGeneration(t *testing.T) {
 	options := projectActionOptions(Context{}, nil)
 	foundGenerate, foundSync := false, false

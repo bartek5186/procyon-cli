@@ -20,9 +20,7 @@ import (
 
 const Name = %q
 
-type Plugin struct {
-	events *coreevents.Bus
-}
+type Plugin struct { events *coreevents.Bus }
 
 func New(_ context.Context, dependencies coreplugins.Dependencies, _ json.RawMessage) (coreplugins.Plugin, error) {
 	if dependencies.Events == nil {
@@ -36,10 +34,7 @@ func (*Plugin) Migrate(context.Context) error     { return nil }
 func (*Plugin) Policies() []authz.Policy          { return nil }
 func (*Plugin) RegisterRoutes(coreplugins.Routes) {}
 func (*Plugin) Shutdown(context.Context) error    { return nil }
-
-func (*Plugin) RegisterEvents(eventBus *coreevents.Bus) error {
-	return registerEventHandlers(eventBus)
-}
+func (*Plugin) RegisterEvents(eventBus *coreevents.Bus) error { return registerEventHandlers(eventBus) }
 
 var (
 	_ coreplugins.Plugin         = (*Plugin)(nil)
@@ -52,43 +47,40 @@ func fullPluginSource(packageName, name, module string, controllers []Controller
 	var fields, initialization, routes, layerImports strings.Builder
 	if len(controllers) > 0 {
 		fmt.Fprintf(&layerImports, "\t%q\n", module+"/controllers")
+		fields.WriteString("\tcontroller *controllers.Controller\n")
+		initialization.WriteString("\t\tcontroller: controllers.NewController(service),\n")
 	}
 	fmt.Fprintf(&layerImports, "\t%q\n\t%q\n", module+"/services", module+"/store")
-	if hasController(controllers, ControllerHello) {
-		fields.WriteString("\thelloController *controllers.HelloController\n")
-		initialization.WriteString("\t\thelloController: controllers.NewHelloController(service),\n")
+
+	if hasController(controllers, ControllerStatus) {
 		fmt.Fprintf(&routes, `
 	if routes.Public != nil {
-		routes.Public.GET(%q, p.helloController.Hello)
+		routes.Public.GET(%q, p.controller.Status)
 	}
-`, "/"+name+"/hello")
+`, "/"+name)
 	}
-	if hasController(controllers, ControllerExample) {
-		fields.WriteString("\texampleController *controllers.ExampleController\n")
-		initialization.WriteString("\t\texampleController: controllers.NewExampleController(service),\n")
+	if hasController(controllers, ControllerRecords) {
 		fmt.Fprintf(&routes, `
 	if routes.Authenticated != nil {
 		group := routes.Authenticated.Group(%q)
 		if routes.Require != nil {
 			group.Use(routes.Require("*", %q, "use"))
 		}
-		group.POST("", p.exampleController.Create)
-		group.GET("", p.exampleController.List)
+		group.POST("", p.controller.Create)
+		group.GET("", p.controller.List)
 	}
-`, "/"+name+"/examples", name)
+`, "/"+name+"/records", name)
 	}
 	if hasController(controllers, ControllerAdmin) {
-		fields.WriteString("\tadminController *controllers.AdminController\n")
-		initialization.WriteString("\t\tadminController: controllers.NewAdminController(service),\n")
 		fmt.Fprintf(&routes, `
 	if routes.Admin != nil {
-		routes.Admin.GET(%q, p.adminController.Stats)
+		routes.Admin.GET(%q, p.controller.Stats)
 	}
 `, "/"+name+"/stats")
 	}
 
 	policies := "return nil"
-	if hasController(controllers, ControllerExample) {
+	if hasController(controllers, ControllerRecords) {
 		policies = fmt.Sprintf(`return []authz.Policy{
 		{Role: authz.RoleUser, Domain: "*", Object: %q, Action: "use"},
 	}`, name)
@@ -113,63 +105,45 @@ type Plugin struct {
 %s}
 
 func New(_ context.Context, dependencies coreplugins.Dependencies, raw json.RawMessage) (coreplugins.Plugin, error) {
-	if dependencies.DB == nil {
-		return nil, errors.New(Name + " requires a database")
-	}
-	if dependencies.Events == nil {
-		return nil, errors.New(Name + " requires the Procyon event bus")
-	}
+	if dependencies.DB == nil { return nil, errors.New(Name + " requires a database") }
+	if dependencies.Events == nil { return nil, errors.New(Name + " requires the Procyon event bus") }
 	config, err := parseConfig(raw)
-	if err != nil {
-		return nil, err
-	}
-	repository := store.NewExampleStore(dependencies.DB)
-	service := services.NewExampleService(repository, config.Greeting)
+	if err != nil { return nil, err }
+	repository := store.NewStore(dependencies.DB)
+	service := services.NewService(repository, config.StatusMessage)
 	return &Plugin{
 %s	}, nil
 }
 
 func (*Plugin) Name() string                  { return Name }
 func (*Plugin) Migrate(context.Context) error { return nil }
-func (*Plugin) Policies() []authz.Policy {
-	%s
-}
+func (*Plugin) Policies() []authz.Policy { %s }
 func (p *Plugin) RegisterRoutes(routes coreplugins.Routes) {%s}
 func (*Plugin) Shutdown(context.Context) error { return nil }
-
-func (*Plugin) RegisterEvents(eventBus *coreevents.Bus) error {
-	return registerEventHandlers(eventBus)
-}
+func (*Plugin) RegisterEvents(eventBus *coreevents.Bus) error { return registerEventHandlers(eventBus) }
 
 var (
 	_ coreplugins.Plugin            = (*Plugin)(nil)
 	_ coreplugins.EventRegistrar    = (*Plugin)(nil)
 	_ coreplugins.MigrationProvider = (*Plugin)(nil)
 )
-`, packageName, layerImports.String(), name,
-		fields.String(), initialization.String(), policies, routes.String())
+`, packageName, layerImports.String(), name, fields.String(), initialization.String(), policies, routes.String())
 }
 
 func fullBoilerplateFiles(packageName, name, module string, controllers []Controller) map[string]string {
 	files := map[string]string{
 		"config.go":                configSource(packageName, name),
 		"migrations.go":            migrationsSource(packageName, module),
-		"models/example.go":        modelsSource(),
-		"store/example.go":         storeSource(module),
-		"services/example.go":      serviceSource(module, name),
-		"services/example_test.go": serviceTestSource(module),
+		"models/models.go":         modelsSource(),
+		"store/store.go":           storeSource(module),
+		"services/service.go":      serviceSource(module, name),
+		"services/service_test.go": serviceTestSource(module),
 		"contracts/events.go":      contractsSource(name),
 		"README.md":                fullReadme(name, controllers),
 		"docs/postman/overview.md": postmanOverview(name, controllers),
 	}
-	if hasController(controllers, ControllerHello) {
-		files["controllers/hello.go"] = helloControllerSource(module)
-	}
-	if hasController(controllers, ControllerExample) {
-		files["controllers/example.go"] = exampleControllerSource(module)
-	}
-	if hasController(controllers, ControllerAdmin) {
-		files["controllers/admin.go"] = adminControllerSource(module)
+	if len(controllers) > 0 {
+		files["controllers/controller.go"] = controllerSource(module)
 	}
 	return files
 }
@@ -192,24 +166,18 @@ import (
 	"strings"
 )
 
-type Config struct {
-	Greeting string `+"`json:\"greeting\"`"+`
-}
+type Config struct { StatusMessage string `+"`json:\"status_message\"`"+` }
 
 func parseConfig(raw json.RawMessage) (Config, error) {
-	config := Config{Greeting: %q}
+	config := Config{StatusMessage: %q}
 	if len(raw) != 0 {
-		if err := json.Unmarshal(raw, &config); err != nil {
-			return Config{}, fmt.Errorf("parse %%s config: %%w", Name, err)
-		}
+		if err := json.Unmarshal(raw, &config); err != nil { return Config{}, fmt.Errorf("parse %%s config: %%w", Name, err) }
 	}
-	config.Greeting = strings.TrimSpace(config.Greeting)
-	if config.Greeting == "" {
-		return Config{}, fmt.Errorf("%%s greeting cannot be empty", Name)
-	}
+	config.StatusMessage = strings.TrimSpace(config.StatusMessage)
+	if config.StatusMessage == "" { return Config{}, fmt.Errorf("%%s status message cannot be empty", Name) }
 	return config, nil
 }
-`, packageName, "hello from "+name)
+`, packageName, name+" is running")
 }
 
 func migrationsSource(packageName, module string) string {
@@ -217,7 +185,6 @@ func migrationsSource(packageName, module string) string {
 
 import (
 	"context"
-
 	coreplugins "github.com/bartek5186/procyon-core/plugins"
 	%q
 	"gorm.io/gorm"
@@ -225,9 +192,9 @@ import (
 
 func (*Plugin) Migrations() []coreplugins.Migration {
 	return []coreplugins.Migration{{
-		Version: "0001_create_examples",
+		Version: "0001_create_records",
 		Up: func(ctx context.Context, db *gorm.DB) error {
-			return db.WithContext(ctx).AutoMigrate(&models.Example{})
+			return db.WithContext(ctx).AutoMigrate(&models.Record{})
 		},
 	}}
 }
@@ -239,25 +206,21 @@ func modelsSource() string {
 
 import "time"
 
-type Example struct {
+// Record is a neutral starter persistence model. Rename it when the plugin acquires
+// its real domain language; avoid using transport DTOs as database models.
+type Record struct {
 	ID        uint      ` + "`json:\"id\" gorm:\"primaryKey\"`" + `
 	CreatedAt time.Time ` + "`json:\"created_at\"`" + `
 	UpdatedAt time.Time ` + "`json:\"updated_at\"`" + `
 	Name      string    ` + "`json:\"name\" gorm:\"size:120;not null\"`" + `
 }
 
-type CreateExampleInput struct {
-	Name string ` + "`json:\"name\"`" + `
+type CreateRecordInput struct { Name string ` + "`json:\"name\"`" + ` }
+type StatusResponse struct {
+	Plugin string ` + "`json:\"plugin\"`" + `
+	Status string ` + "`json:\"status\"`" + `
 }
-
-type HelloResponse struct {
-	Message string ` + "`json:\"message\"`" + `
-	Module  string ` + "`json:\"module\"`" + `
-}
-
-type StatsResponse struct {
-	Examples int64 ` + "`json:\"examples\"`" + `
-}
+type StatsResponse struct { Records int64 ` + "`json:\"records\"`" + ` }
 `
 }
 
@@ -266,27 +229,22 @@ func storeSource(module string) string {
 
 import (
 	"context"
-
 	%q
 	"gorm.io/gorm"
 )
 
-type ExampleStore struct { db *gorm.DB }
-
-func NewExampleStore(db *gorm.DB) *ExampleStore { return &ExampleStore{db: db} }
-
-func (s *ExampleStore) Create(ctx context.Context, example *models.Example) error {
-	return s.db.WithContext(ctx).Create(example).Error
+type Store struct { db *gorm.DB }
+func NewStore(db *gorm.DB) *Store { return &Store{db: db} }
+func (s *Store) Create(ctx context.Context, record *models.Record) error {
+	return s.db.WithContext(ctx).Create(record).Error
 }
-
-func (s *ExampleStore) List(ctx context.Context) ([]models.Example, error) {
-	var examples []models.Example
-	return examples, s.db.WithContext(ctx).Order("id DESC").Find(&examples).Error
+func (s *Store) List(ctx context.Context) ([]models.Record, error) {
+	var records []models.Record
+	return records, s.db.WithContext(ctx).Order("id DESC").Find(&records).Error
 }
-
-func (s *ExampleStore) Count(ctx context.Context) (int64, error) {
+func (s *Store) Count(ctx context.Context) (int64, error) {
 	var count int64
-	err := s.db.WithContext(ctx).Model(&models.Example{}).Count(&count).Error
+	err := s.db.WithContext(ctx).Model(&models.Record{}).Count(&count).Error
 	return count, err
 }
 `, module+"/models")
@@ -299,147 +257,74 @@ import (
 	"context"
 	"errors"
 	"strings"
-
 	%q
 )
 
-type ExampleRepository interface {
-	Create(context.Context, *models.Example) error
-	List(context.Context) ([]models.Example, error)
+type Repository interface {
+	Create(context.Context, *models.Record) error
+	List(context.Context) ([]models.Record, error)
 	Count(context.Context) (int64, error)
 }
-
-type ExampleService struct {
-	repository ExampleRepository
-	greeting   string
+type Service struct {
+	repository Repository
+	statusMessage string
 }
-
-func NewExampleService(repository ExampleRepository, greeting string) *ExampleService {
-	return &ExampleService{repository: repository, greeting: greeting}
+func NewService(repository Repository, statusMessage string) *Service {
+	return &Service{repository: repository, statusMessage: statusMessage}
 }
-
-func (s *ExampleService) Hello() models.HelloResponse {
-	return models.HelloResponse{Message: s.greeting, Module: %q}
+func (s *Service) Status() models.StatusResponse {
+	return models.StatusResponse{Plugin: %q, Status: s.statusMessage}
 }
-
-func (s *ExampleService) Create(ctx context.Context, input models.CreateExampleInput) (*models.Example, error) {
+func (s *Service) Create(ctx context.Context, input models.CreateRecordInput) (*models.Record, error) {
 	input.Name = strings.TrimSpace(input.Name)
-	if input.Name == "" {
-		return nil, errors.New("name is required")
-	}
-	example := &models.Example{Name: input.Name}
-	if err := s.repository.Create(ctx, example); err != nil {
-		return nil, err
-	}
-	return example, nil
+	if input.Name == "" { return nil, errors.New("name is required") }
+	record := &models.Record{Name: input.Name}
+	if err := s.repository.Create(ctx, record); err != nil { return nil, err }
+	return record, nil
 }
-
-func (s *ExampleService) List(ctx context.Context) ([]models.Example, error) {
-	return s.repository.List(ctx)
-}
-
-func (s *ExampleService) Stats(ctx context.Context) (models.StatsResponse, error) {
+func (s *Service) List(ctx context.Context) ([]models.Record, error) { return s.repository.List(ctx) }
+func (s *Service) Stats(ctx context.Context) (models.StatsResponse, error) {
 	count, err := s.repository.Count(ctx)
-	return models.StatsResponse{Examples: count}, err
+	return models.StatsResponse{Records: count}, err
 }
 `, module+"/models", name)
 }
 
-func helloControllerSource(module string) string {
-	return fmt.Sprintf(`package controllers
-
-import (
-	"net/http"
-
-	%q
-	%q
-	"github.com/labstack/echo/v4"
-)
-
-type helloService interface { Hello() models.HelloResponse }
-
-type HelloController struct { service helloService }
-
-func NewHelloController(service *services.ExampleService) *HelloController {
-	return &HelloController{service: service}
-}
-
-func (c *HelloController) Hello(ctx echo.Context) error {
-	return ctx.JSON(http.StatusOK, c.service.Hello())
-}
-`, module+"/models", module+"/services")
-}
-
-func exampleControllerSource(module string) string {
+func controllerSource(module string) string {
 	return fmt.Sprintf(`package controllers
 
 import (
 	"context"
 	"net/http"
-
 	%q
 	%q
 	"github.com/labstack/echo/v4"
 )
 
-type exampleService interface {
-	Create(context.Context, models.CreateExampleInput) (*models.Example, error)
-	List(context.Context) ([]models.Example, error)
+type service interface {
+	Status() models.StatusResponse
+	Create(context.Context, models.CreateRecordInput) (*models.Record, error)
+	List(context.Context) ([]models.Record, error)
+	Stats(context.Context) (models.StatsResponse, error)
 }
-
-type ExampleController struct { service exampleService }
-
-func NewExampleController(service *services.ExampleService) *ExampleController {
-	return &ExampleController{service: service}
+type Controller struct { service service }
+func NewController(service *services.Service) *Controller { return &Controller{service: service} }
+func (c *Controller) Status(ctx echo.Context) error { return ctx.JSON(http.StatusOK, c.service.Status()) }
+func (c *Controller) Create(ctx echo.Context) error {
+	var input models.CreateRecordInput
+	if err := ctx.Bind(&input); err != nil { return echo.NewHTTPError(http.StatusBadRequest, "invalid payload") }
+	record, err := c.service.Create(ctx.Request().Context(), input)
+	if err != nil { return echo.NewHTTPError(http.StatusBadRequest, err.Error()) }
+	return ctx.JSON(http.StatusCreated, record)
 }
-
-func (c *ExampleController) Create(ctx echo.Context) error {
-	var input models.CreateExampleInput
-	if err := ctx.Bind(&input); err != nil {
-		return echo.NewHTTPError(http.StatusBadRequest, "invalid payload")
-	}
-	example, err := c.service.Create(ctx.Request().Context(), input)
-	if err != nil {
-		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
-	}
-	return ctx.JSON(http.StatusCreated, example)
+func (c *Controller) List(ctx echo.Context) error {
+	records, err := c.service.List(ctx.Request().Context())
+	if err != nil { return err }
+	return ctx.JSON(http.StatusOK, records)
 }
-
-func (c *ExampleController) List(ctx echo.Context) error {
-	examples, err := c.service.List(ctx.Request().Context())
-	if err != nil {
-		return err
-	}
-	return ctx.JSON(http.StatusOK, examples)
-}
-`, module+"/models", module+"/services")
-}
-
-func adminControllerSource(module string) string {
-	return fmt.Sprintf(`package controllers
-
-import (
-	"context"
-	"net/http"
-
-	%q
-	%q
-	"github.com/labstack/echo/v4"
-)
-
-type statsService interface { Stats(context.Context) (models.StatsResponse, error) }
-
-type AdminController struct { service statsService }
-
-func NewAdminController(service *services.ExampleService) *AdminController {
-	return &AdminController{service: service}
-}
-
-func (c *AdminController) Stats(ctx echo.Context) error {
+func (c *Controller) Stats(ctx echo.Context) error {
 	stats, err := c.service.Stats(ctx.Request().Context())
-	if err != nil {
-		return err
-	}
+	if err != nil { return err }
 	return ctx.JSON(http.StatusOK, stats)
 }
 `, module+"/models", module+"/services")
@@ -451,24 +336,20 @@ func serviceTestSource(module string) string {
 import (
 	"context"
 	"testing"
-
 	%q
 )
 
-type exampleRepositoryStub struct { created *models.Example }
+type repositoryStub struct { created *models.Record }
+func (s *repositoryStub) Create(_ context.Context, record *models.Record) error { s.created = record; return nil }
+func (*repositoryStub) List(context.Context) ([]models.Record, error) { return nil, nil }
+func (*repositoryStub) Count(context.Context) (int64, error) { return 0, nil }
 
-func (s *exampleRepositoryStub) Create(_ context.Context, example *models.Example) error { s.created = example; return nil }
-func (*exampleRepositoryStub) List(context.Context) ([]models.Example, error) { return nil, nil }
-func (*exampleRepositoryStub) Count(context.Context) (int64, error) { return 0, nil }
-
-func TestExampleServiceCreate(t *testing.T) {
-	repository := &exampleRepositoryStub{}
-	service := NewExampleService(repository, "hello")
-	created, err := service.Create(context.Background(), models.CreateExampleInput{Name: " first "})
+func TestServiceCreate(t *testing.T) {
+	repository := &repositoryStub{}
+	service := NewService(repository, "ready")
+	created, err := service.Create(context.Background(), models.CreateRecordInput{Name: " first "})
 	if err != nil { t.Fatal(err) }
-	if created.Name != "first" || repository.created != created {
-		t.Fatalf("unexpected example: %%+v", created)
-	}
+	if created.Name != "first" || repository.created != created { t.Fatalf("unexpected record: %%+v", created) }
 }
 `, module+"/models")
 }
@@ -478,45 +359,44 @@ func contractsSource(name string) string {
 
 import coreevents "github.com/bartek5186/procyon-core/events"
 
-type ExampleCreated struct {
-	ID   uint   `+"`json:\"id\"`"+`
+type RecordCreated struct {
+	ID uint `+"`json:\"id\"`"+`
 	Name string `+"`json:\"name\"`"+`
 }
-
-const ExampleCreatedTopic coreevents.Topic[ExampleCreated] = %q
-`, name+".example.created.v1")
+const RecordCreatedTopic coreevents.Topic[RecordCreated] = %q
+`, name+".record.created.v1")
 }
 
 func fullReadme(name string, controllers []Controller) string {
 	return fmt.Sprintf(`# %s
 
-Complete Procyon plugin boilerplate with configuration, a versioned example migration, model, repository, service, events and tests.
+Complete Procyon plugin boilerplate with configuration, a versioned migration, neutral model, repository, service, event contract and test.
 
 ## Generated routes
 
 %s
 
-Replace the example domain with real business logic, keep migration versions immutable after release, and document public contracts before publishing the module.
+Rename the neutral Record type when the plugin acquires its domain language. Keep migration versions immutable after release and document public contracts before publishing the module.
 `, name, routeDocumentation(name, controllers))
 }
 
 func postmanOverview(name string, controllers []Controller) string {
-	return fmt.Sprintf("The `%s` plugin includes runnable example endpoints. Replace their payloads and examples as the domain evolves.\n\n%s\n", name, routeDocumentation(name, controllers))
+	return fmt.Sprintf("The `%s` plugin includes runnable starter endpoints. Adapt their payloads after naming the plugin domain.\n\n%s\n", name, routeDocumentation(name, controllers))
 }
 
 func routeDocumentation(name string, controllers []Controller) string {
 	var routes []string
-	if hasController(controllers, ControllerHello) {
-		routes = append(routes, "- `GET /"+name+"/hello` — public hello endpoint")
+	if hasController(controllers, ControllerStatus) {
+		routes = append(routes, "- `GET /"+name+"` — public plugin status")
 	}
-	if hasController(controllers, ControllerExample) {
-		routes = append(routes, "- `POST /"+name+"/examples` and `GET /"+name+"/examples` — authenticated example CRUD")
+	if hasController(controllers, ControllerRecords) {
+		routes = append(routes, "- `POST /"+name+"/records` and `GET /"+name+"/records` — authenticated starter operations")
 	}
 	if hasController(controllers, ControllerAdmin) {
 		routes = append(routes, "- `GET /"+name+"/stats` — admin statistics")
 	}
 	if len(routes) == 0 {
-		return "No HTTP controllers were selected."
+		return "No HTTP routes were selected."
 	}
 	return strings.Join(routes, "\n")
 }

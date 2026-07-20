@@ -47,9 +47,9 @@ func TestCreateCompletePluginByDefault(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, name := range []string{
-		"config.go", "migrations.go", "models/example.go", "store/example.go",
-		"services/example.go", "services/example_test.go", "contracts/events.go",
-		"controllers/hello.go", "controllers/example.go", "controllers/admin.go",
+		"config.go", "migrations.go", "models/models.go", "store/store.go",
+		"services/service.go", "services/service_test.go", "contracts/events.go",
+		"controllers/controller.go",
 	} {
 		if _, err := os.Stat(filepath.Join(root, name)); err != nil {
 			t.Fatalf("missing %s: %v", name, err)
@@ -60,13 +60,26 @@ func TestCreateCompletePluginByDefault(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, expected := range []string{
-		"controllers.NewHelloController", "controllers.NewExampleController", "controllers.NewAdminController",
-		`routes.Public.GET("/catalog/hello"`, `Group("/catalog/examples")`, `routes.Admin.GET("/catalog/stats"`,
+		"controllers.NewController", "store.NewStore", "services.NewService",
+		`routes.Public.GET("/catalog"`, `Group("/catalog/records")`, `routes.Admin.GET("/catalog/stats"`,
 		"coreplugins.MigrationProvider",
 	} {
 		if !strings.Contains(string(plugin), expected) {
 			t.Fatalf("plugin source is missing %q:\n%s", expected, plugin)
 		}
+	}
+	err = filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		base := strings.ToLower(entry.Name())
+		if strings.Contains(base, "hello") || strings.Contains(base, "example") {
+			t.Fatalf("generated path uses placeholder feature name: %s", path)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
 	}
 	goMod, err := os.ReadFile(filepath.Join(root, "go.mod"))
 	if err != nil {
@@ -81,25 +94,21 @@ func TestCreateOnlySelectedControllers(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "reports")
 	_, err := Create(Options{
 		Name: "reports", GoModule: "github.com/acme/reports", OutputDir: root,
-		CoreVersion: "v0.6.0", CLIVersion: "0.7.0", Controllers: []Controller{ControllerHello},
+		CoreVersion: "v0.6.0", CLIVersion: "0.7.0", Controllers: []Controller{ControllerStatus},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Stat(filepath.Join(root, "controllers", "hello.go")); err != nil {
+	if _, err := os.Stat(filepath.Join(root, "controllers", "controller.go")); err != nil {
 		t.Fatal(err)
-	}
-	for _, name := range []string{"example.go", "admin.go"} {
-		if _, err := os.Stat(filepath.Join(root, "controllers", name)); !os.IsNotExist(err) {
-			t.Fatalf("controller %s should not be generated", name)
-		}
 	}
 	plugin, err := os.ReadFile(filepath.Join(root, "plugin.go"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(string(plugin), "ExampleController") || strings.Contains(string(plugin), "AdminController") {
-		t.Fatalf("unselected controller was wired:\n%s", plugin)
+	if !strings.Contains(string(plugin), `routes.Public.GET("/reports"`) ||
+		strings.Contains(string(plugin), "/records") || strings.Contains(string(plugin), "/stats") {
+		t.Fatalf("unexpected route was wired:\n%s", plugin)
 	}
 }
 
