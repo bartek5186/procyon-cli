@@ -163,6 +163,10 @@ func removeHelloWiring(root string) error {
 	if !fileExists(filepath.Join(root, applicationFile)) {
 		applicationFile = "main.go"
 	}
+	policyFile := "internal/authz/policies.go"
+	if !fileExists(filepath.Join(root, policyFile)) {
+		policyFile = "policies.go"
+	}
 	lineRemovals := map[string][]string{
 		applicationFile: {
 			"/controllers\"",
@@ -186,7 +190,7 @@ func removeHelloWiring(root string) error {
 			"/models\"",
 			"&models.HelloMessage{}",
 		},
-		"policies.go": {
+		policyFile: {
 			"Object: \"hello\"",
 		},
 	}
@@ -407,7 +411,7 @@ func findTemplateRoot(wd string) (string, error) {
 func isTemplateRoot(dir string) bool {
 	return fileExists(filepath.Join(dir, "go.mod")) &&
 		fileExists(filepath.Join(dir, "main.go")) &&
-		fileExists(filepath.Join(dir, "policies.go")) &&
+		(fileExists(filepath.Join(dir, "internal", "authz", "policies.go")) || fileExists(filepath.Join(dir, "policies.go"))) &&
 		fileExists(filepath.Join(dir, "config", "config.example.json"))
 }
 

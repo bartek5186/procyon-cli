@@ -103,6 +103,10 @@ func validateModuleDoesNotExist(spec moduleSpec) error {
 	if err != nil {
 		return err
 	}
+	policyPath, err := applicationPolicyFile()
+	if err != nil {
+		return err
+	}
 
 	for path := range generatedFiles(spec) {
 		if strings.Contains(path, spec.MigStamp) {
@@ -143,7 +147,7 @@ func validateModuleDoesNotExist(spec moduleSpec) error {
 		"internal/migrate.go": {
 			"&models." + spec.Pascal + "{},",
 		},
-		"policies.go": {
+		policyPath: {
 			"Object: \"" + spec.Name + "\", Action: \"read\"",
 			"Object: \"" + spec.Name + "\", Action: \"manage\"",
 		},
@@ -176,7 +180,6 @@ func validateProcyonProject() error {
 		"store/appStore.go",
 		"services/appService.go",
 		"internal/migrate.go",
-		"policies.go",
 	}
 	for _, path := range required {
 		if _, err := os.Stat(path); err != nil {
@@ -186,8 +189,20 @@ func validateProcyonProject() error {
 			return err
 		}
 	}
+	if _, err := applicationPolicyFile(); err != nil {
+		return err
+	}
 	_, err := applicationCompositionFile()
 	return err
+}
+
+func applicationPolicyFile() (string, error) {
+	for _, path := range []string{"internal/authz/policies.go", "policies.go"} {
+		if fileExists(path) {
+			return path, nil
+		}
+	}
+	return "", errors.New("current directory does not look like a Procyon project; missing internal/authz/policies.go")
 }
 
 func applicationCompositionFile() (string, error) {
@@ -348,19 +363,34 @@ func wireAutoMigrate(s moduleSpec) error {
 }
 
 func wirePolicies(s moduleSpec) error {
-	path := "policies.go"
+	path, err := applicationPolicyFile()
+	if err != nil {
+		return err
+	}
 	return updateGoFile(path, func(src string) (string, error) {
+		userRole, adminRole := policyRoleReferences(src)
 		var err error
 		src, err = insertAfter(src,
 			"\t// procyon:module-user-policies",
-			"\t{Role: authz.RoleUser, Domain: \"*\", Object: \""+s.Name+"\", Action: \"read\"},")
+			"\t{Role: "+userRole+", Domain: \"*\", Object: \""+s.Name+"\", Action: \"read\"},")
 		if err != nil {
 			return "", err
 		}
 		return insertAfter(src,
 			"\t// procyon:module-admin-policies",
-			"\t{Role: authz.RoleAdmin, Domain: \"*\", Object: \""+s.Name+"\", Action: \"manage\"},")
+			"\t{Role: "+adminRole+", Domain: \"*\", Object: \""+s.Name+"\", Action: \"manage\"},")
 	})
+}
+
+func policyRoleReferences(src string) (user string, admin string) {
+	switch {
+	case strings.Contains(src, "Role: RoleUser"):
+		return "RoleUser", "RoleAdmin"
+	case strings.Contains(src, "Role: coreauthz.RoleUser"):
+		return "coreauthz.RoleUser", "coreauthz.RoleAdmin"
+	default:
+		return "authz.RoleUser", "authz.RoleAdmin"
+	}
 }
 
 func updateGoFile(path string, fn func(string) (string, error)) error {

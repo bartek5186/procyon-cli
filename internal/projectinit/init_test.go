@@ -158,7 +158,7 @@ func TestTemplateCanBeGeneratedWithoutHello(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	for _, rel := range []string{"app.go", "routes.go", "plugins_local.go", "store/appStore.go", "services/appService.go", "internal/migrate.go", "policies.go"} {
+	for _, rel := range []string{"app.go", "routes.go", "plugins_local.go", "store/appStore.go", "services/appService.go", "internal/migrate.go", "internal/authz/policies.go"} {
 		raw, err := os.ReadFile(filepath.Join(out, rel))
 		if err != nil {
 			t.Fatal(err)
@@ -313,10 +313,12 @@ func migrationModels() []any {
 
 // procyon:migrations
 `,
-		"policies.go": `package main
+		"internal/authz/policies.go": `package authz
 
 var policies = []struct{ Object string }{
+	// procyon:module-user-policies
 	{Object: "hello"},
+	// procyon:module-admin-policies
 }
 
 // procyon:policies
