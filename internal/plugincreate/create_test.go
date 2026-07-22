@@ -61,12 +61,16 @@ func TestCreateCompletePluginByDefault(t *testing.T) {
 	}
 	for _, expected := range []string{
 		"controllers.NewController", "store.NewStore", "services.NewService",
-		`routes.Public.GET("/catalog"`, `Group("/catalog/records")`, `routes.Admin.GET("/catalog/stats"`,
+		`routes.Public.GET("/catalog"`, `Group("/catalog/records")`,
+		`routes.Operations.GET("/catalog/stats", p.controller.Stats)`,
 		"coreplugins.MigrationProvider",
 	} {
 		if !strings.Contains(string(plugin), expected) {
 			t.Fatalf("plugin source is missing %q:\n%s", expected, plugin)
 		}
+	}
+	if strings.Contains(string(plugin), `routes.Admin.GET("/catalog/stats"`) {
+		t.Fatalf("admin controller was wired to the public RBAC group instead of Operations:\n%s", plugin)
 	}
 	err = filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
 		if err != nil {

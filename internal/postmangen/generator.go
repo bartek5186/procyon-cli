@@ -681,6 +681,7 @@ type postmanInstalledModule struct {
 type pluginRouteGroup struct {
 	Path     string
 	AuthMode string
+	Admin    bool
 }
 
 func (g *generator) collectPluginRoutes() ([]route, error) {
@@ -920,6 +921,12 @@ func collectRoutesFromPlugin(root, moduleName string) ([]route, error) {
 						pluginRoute.Path,
 					)
 					if folder := routeCommentValue(fset, file, value, "folder"); folder != "" {
+						if pluginRoute.Admin {
+							folderPath := routeFolderPath(folder)
+							if len(folderPath) == 0 || folderPath[0] != "Admin" {
+								folder = "Admin/" + folder
+							}
+						}
 						pluginRoute.Folder = folder
 					}
 					key := pluginRoute.Method + " " + pluginRoute.Path
@@ -1027,10 +1034,15 @@ func pluginRouteFromCall(call *ast.CallExpr, routesParameter string, groups map[
 	}
 	fullPath := cleanPath(group.Path + path)
 	handler := handlerName(call.Args[1])
+	folder := titleForSegment(moduleName)
+	if group.Admin {
+		folder = "Admin/" + folder
+	}
 	return route{
 		Method: method, Path: fullPath, Handler: handler,
 		DisplayName: routeDisplayName(handler, "", fullPath),
-		Folder:      titleForSegment(moduleName),
+		Folder:      folder,
+		Admin:       group.Admin,
 		AuthMode:    group.AuthMode,
 	}, true
 }
@@ -1055,9 +1067,12 @@ func resolvePluginGroup(expression ast.Expr, routesParameter string, groups map[
 		return pluginRouteGroup{Path: "/v1", AuthMode: routeAuthBearer}, true
 	case "Admin":
 		// Plugin admin routes are session/RBAC-protected routes on the public
-		// server. The separate adminURL/admin-key server is exposed to the
-		// application as runtime.Routes.Operations, not to plugins.
+		// server. They deliberately remain distinct from Operations routes.
 		return pluginRouteGroup{Path: "/v1/admin", AuthMode: routeAuthBearer}, true
+	case "Operations":
+		// Operations routes live on the separate admin server. Their Postman
+		// requests use adminURL and inherit X-Admin-Key auth from Admin.
+		return pluginRouteGroup{Admin: true}, true
 	default:
 		return pluginRouteGroup{}, false
 	}

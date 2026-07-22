@@ -73,8 +73,8 @@ func fullPluginSource(packageName, name, module string, controllers []Controller
 	}
 	if hasController(controllers, ControllerAdmin) {
 		fmt.Fprintf(&routes, `
-	if routes.Admin != nil {
-		routes.Admin.GET(%q, p.controller.Stats)
+	if routes.Operations != nil {
+		routes.Operations.GET(%q, p.controller.Stats)
 	}
 `, "/"+name+"/stats")
 	}

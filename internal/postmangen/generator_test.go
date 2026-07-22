@@ -218,6 +218,11 @@ func (p *Plugin) RegisterRoutes(routes Routes) {
 		g.POST("/leagues/process", p.ProcessLeagues)
 		g.GET("/team-leagues/stats", p.TeamStats) // folder: Admin/Team Leagues, name: TeamLeagueStats
 	}
+	if routes.Operations != nil {
+		g := routes.Operations
+		g.POST("/team-leagues/process", p.ProcessTeamLeagues) // folder: Team League Operations, name: ProcessTeamLeagueOperations
+		g.GET("/team-leagues/health", p.TeamLeagueOperationsHealth)
+	}
 }
 `)
 
@@ -225,15 +230,19 @@ func (p *Plugin) RegisterRoutes(routes Routes) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(routes) != 4 {
-		t.Fatalf("routes = %d, want 4: %+v", len(routes), routes)
+	if len(routes) != 6 {
+		t.Fatalf("routes = %d, want 6: %+v", len(routes), routes)
 	}
 	assertPluginRoute(t, routes, "GET", "/v1/leagues", routeAuthBearer, false)
 	assertPluginRoute(t, routes, "GET", "/v1/team-leagues/current/:teamID", routeAuthBearer, false)
 	assertPluginRoute(t, routes, "POST", "/v1/admin/leagues/process", routeAuthBearer, false)
 	assertPluginRoute(t, routes, "GET", "/v1/admin/team-leagues/stats", routeAuthBearer, false)
+	assertPluginRoute(t, routes, "POST", "/team-leagues/process", "", true)
+	assertPluginRoute(t, routes, "GET", "/team-leagues/health", "", true)
 	assertPluginRoutePresentation(t, routes, "GET", "/v1/team-leagues/current/:teamID", "Team Leagues", "GetCurrentTeamLeague")
 	assertPluginRoutePresentation(t, routes, "GET", "/v1/admin/team-leagues/stats", "Admin/Team Leagues", "TeamLeagueStats")
+	assertPluginRoutePresentation(t, routes, "POST", "/team-leagues/process", "Admin/Team League Operations", "ProcessTeamLeagueOperations")
+	assertPluginRoutePresentation(t, routes, "GET", "/team-leagues/health", "Admin/Leagues", "TeamLeagueOperationsHealth")
 
 	collection := (&generator{}).collection("Test API", routes, collectionVars{})
 	admin := findPostmanItem(collection.Item, "Admin")
@@ -250,6 +259,28 @@ func (p *Plugin) RegisterRoutes(routes Routes) {
 	}
 	if stats.Auth == nil || stats.Auth.Type != "bearer" {
 		t.Fatalf("plugin admin route uses the wrong auth: %+v", stats)
+	}
+	operations := findPostmanItem(admin.Item, "Team League Operations")
+	if operations == nil {
+		t.Fatalf("missing Admin/Team League Operations folder: %+v", admin.Item)
+	}
+	process := findPostmanItem(operations.Item, "ProcessTeamLeagueOperations")
+	if process == nil || process.Request == nil || process.Request.URL.Raw != "{{adminURL}}/team-leagues/process" {
+		t.Fatalf("plugin operations route uses the wrong server: %+v", process)
+	}
+	if process.Auth != nil || process.Request.Auth != nil {
+		t.Fatalf("plugin operations route must inherit admin-key auth without bearer: %+v", process)
+	}
+	defaultOperations := findPostmanItem(admin.Item, "Leagues")
+	if defaultOperations == nil {
+		t.Fatalf("missing default Admin/Leagues operations folder: %+v", admin.Item)
+	}
+	health := findPostmanItem(defaultOperations.Item, "TeamLeagueOperationsHealth")
+	if health == nil || health.Request == nil || health.Request.URL.Raw != "{{adminURL}}/team-leagues/health" || health.Auth != nil || health.Request.Auth != nil {
+		t.Fatalf("default plugin operations presentation is invalid: %+v", health)
+	}
+	if admin.Auth == nil || admin.Auth.Type != "apikey" || len(admin.Auth.APIKey) != 3 || admin.Auth.APIKey[0].Value != "X-Admin-Key" || admin.Auth.APIKey[1].Value != "{{adminKey}}" {
+		t.Fatalf("Admin folder does not provide inherited admin-key auth: %+v", admin.Auth)
 	}
 }
 
