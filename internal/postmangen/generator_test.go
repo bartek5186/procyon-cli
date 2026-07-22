@@ -93,7 +93,7 @@ Checkout is completed on Stripe and finalized by a signed webhook.`)
 	}
 	assertPluginRoute(t, routes, "GET", "/v1/payments/prices/:provider", routeAuthPublic, false)
 	assertPluginRoute(t, routes, "POST", "/v1/payments/checkout", routeAuthBearer, false)
-	assertPluginRoute(t, routes, "DELETE", "/v1/admin/payments/:id", routeAuthAdmin, true)
+	assertPluginRoute(t, routes, "DELETE", "/v1/admin/payments/:id", routeAuthBearer, false)
 	for _, item := range routes {
 		if item.Folder != "Payment System" {
 			t.Fatalf("unexpected folder %q", item.Folder)
@@ -193,6 +193,63 @@ func (*Plugin) RegisterRoutes(routes Routes) {
 	assertPluginRoute(t, routes, "GET", "/v1/leagues", routeAuthPublic, false)
 	if routes[0].Folder != "Leagues" {
 		t.Fatalf("folder = %q", routes[0].Folder)
+	}
+}
+
+func TestCollectLocalPluginRoutesFromRoutesFileSupportsAliasesAndComments(t *testing.T) {
+	project := t.TempDir()
+	plugin := filepath.Join(project, "plugins", "leagues")
+	writePostmanTestFile(t, filepath.Join(plugin, "plugin.go"), `package leagues
+
+type Plugin struct{}
+`)
+	writePostmanTestFile(t, filepath.Join(plugin, "routes.go"), `package leagues
+
+func (p *Plugin) RegisterRoutes(routes Routes) {
+	if routes.Authenticated != nil {
+		g, require := routes.Authenticated, routes.Require
+		g.GET("/leagues", p.GetLeagues, require("player:*", "league", "view"))
+		if p.teamLeaguesEnabled {
+			g.GET("/team-leagues/current/:teamID", p.GetCurrent) // folder: Team Leagues, name: GetCurrentTeamLeague
+		}
+	}
+	if routes.Admin != nil {
+		g := routes.Admin
+		g.POST("/leagues/process", p.ProcessLeagues)
+		g.GET("/team-leagues/stats", p.TeamStats) // folder: Admin/Team Leagues, name: TeamLeagueStats
+	}
+}
+`)
+
+	routes, err := (&generator{root: project}).collectPluginRoutes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(routes) != 4 {
+		t.Fatalf("routes = %d, want 4: %+v", len(routes), routes)
+	}
+	assertPluginRoute(t, routes, "GET", "/v1/leagues", routeAuthBearer, false)
+	assertPluginRoute(t, routes, "GET", "/v1/team-leagues/current/:teamID", routeAuthBearer, false)
+	assertPluginRoute(t, routes, "POST", "/v1/admin/leagues/process", routeAuthBearer, false)
+	assertPluginRoute(t, routes, "GET", "/v1/admin/team-leagues/stats", routeAuthBearer, false)
+	assertPluginRoutePresentation(t, routes, "GET", "/v1/team-leagues/current/:teamID", "Team Leagues", "GetCurrentTeamLeague")
+	assertPluginRoutePresentation(t, routes, "GET", "/v1/admin/team-leagues/stats", "Admin/Team Leagues", "TeamLeagueStats")
+
+	collection := (&generator{}).collection("Test API", routes, collectionVars{})
+	admin := findPostmanItem(collection.Item, "Admin")
+	if admin == nil {
+		t.Fatalf("missing Admin folder: %+v", collection.Item)
+	}
+	teamLeagues := findPostmanItem(admin.Item, "Team Leagues")
+	if teamLeagues == nil {
+		t.Fatalf("missing Admin/Team Leagues folder: %+v", admin.Item)
+	}
+	stats := findPostmanItem(teamLeagues.Item, "TeamLeagueStats")
+	if stats == nil || stats.Request == nil || stats.Request.URL.Raw != "{{baseURL}}/v1/admin/team-leagues/stats" {
+		t.Fatalf("plugin admin route uses the wrong server: %+v", stats)
+	}
+	if stats.Auth == nil || stats.Auth.Type != "bearer" {
+		t.Fatalf("plugin admin route uses the wrong auth: %+v", stats)
 	}
 }
 
@@ -344,12 +401,81 @@ func registerPublicRoutes(routes Routes, app *application) error {
 	assertGeneratedRoute(t, routes, "DELETE", "/v1/admin/items/:id", "Delete")
 }
 
+func TestCollectRoutesStartsFromApplicationRegisterRoutes(t *testing.T) {
+	project := t.TempDir()
+	writePostmanTestFile(t, filepath.Join(project, "routes.go"), `package main
+type application struct{}
+func (app *application) registerRoutes(routes Routes) error {
+	registerPublicRoutes(routes.Public, app)
+	if routes.Authenticated != nil {
+		registerAuthenticatedRoutes(routes.Authenticated, app)
+	}
+	registerAdminRoutes(routes.Operations, app)
+	registerUploadRoutes(routes.UploadRoot, app)
+	return nil
+}
+func registerPublicRoutes(e *Echo, app *application) {
+	e.GET("/status", app.Status)
+}
+func registerAuthenticatedRoutes(g *Group, app *application) {
+	g.GET("/profile", app.Profile) // folder: Players, name: MyProfile
+}
+func registerAdminRoutes(e *Echo, app *application) {
+	e.GET("/jobs", app.Jobs)
+}
+func registerUploadRoutes(g *Group, app *application) {
+	g.POST("/v1/upload", app.Upload)
+}
+`)
+
+	generator := &generator{
+		root:        project,
+		fset:        token.NewFileSet(),
+		structs:     map[string]*ast.StructType{},
+		handlerBody: map[string]any{},
+		funcReturns: map[string][]ast.Expr{},
+	}
+	if err := generator.load(); err != nil {
+		t.Fatal(err)
+	}
+	routes := generator.collectRoutes()
+	if len(routes) != 4 {
+		t.Fatalf("routes = %d, want 4: %+v", len(routes), routes)
+	}
+	assertGeneratedRoute(t, routes, "GET", "/status", "Status")
+	assertGeneratedRoute(t, routes, "GET", "/v1/profile", "MyProfile")
+	assertGeneratedRoute(t, routes, "GET", "/jobs", "Jobs")
+	assertGeneratedRoute(t, routes, "POST", "/v1/upload", "Upload")
+
+	for _, item := range routes {
+		if item.Path == "/v1/profile" && item.Folder != "Players" {
+			t.Fatalf("profile folder = %q, want Players", item.Folder)
+		}
+		if item.Path == "/jobs" && !item.Admin {
+			t.Fatalf("operations route should use admin API: %+v", item)
+		}
+	}
+}
+
 func assertPluginRoute(t *testing.T, routes []route, method, path, authMode string, admin bool) {
 	t.Helper()
 	for _, item := range routes {
 		if item.Method == method && item.Path == path {
 			if item.AuthMode != authMode || item.Admin != admin {
 				t.Fatalf("unexpected route metadata: %+v", item)
+			}
+			return
+		}
+	}
+	t.Fatalf("missing route %s %s in %+v", method, path, routes)
+}
+
+func assertPluginRoutePresentation(t *testing.T, routes []route, method, path, folder, displayName string) {
+	t.Helper()
+	for _, item := range routes {
+		if item.Method == method && item.Path == path {
+			if item.Folder != folder || item.DisplayName != displayName {
+				t.Fatalf("route %s %s presentation = folder %q, name %q; want folder %q, name %q", method, path, item.Folder, item.DisplayName, folder, displayName)
 			}
 			return
 		}

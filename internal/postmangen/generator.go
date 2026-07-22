@@ -29,7 +29,6 @@ type route struct {
 const (
 	routeAuthPublic = "public"
 	routeAuthBearer = "bearer"
-	routeAuthAdmin  = "admin"
 )
 
 type postmanCollection struct {
@@ -540,6 +539,12 @@ func (g *generator) bindExampleForHandler(fn *ast.FuncDecl) (any, bool) {
 	return g.exampleFromExpr(typ, 0), true
 }
 
+type applicationRouteScope struct {
+	Prefix        string
+	Admin         bool
+	RuntimeRoutes bool
+}
+
 func (g *generator) collectRoutes() []route {
 	funcs := map[string]*ast.FuncDecl{}
 	for _, decl := range g.routesFile.Decls {
@@ -551,29 +556,29 @@ func (g *generator) collectRoutes() []route {
 
 	var out []route
 	seen := map[string]bool{}
-	var walkFunc func(name string, prefixes map[string]string, admin bool)
+	var walkFunc func(name string, scopes map[string]applicationRouteScope)
 
-	walkFunc = func(name string, prefixes map[string]string, admin bool) {
+	walkFunc = func(name string, scopes map[string]applicationRouteScope) {
 		fn := funcs[name]
 		if fn == nil || fn.Body == nil {
 			return
 		}
-		env := cloneMap(prefixes)
+		env := cloneApplicationRouteScopes(scopes)
 
-		var walkStatements func([]ast.Stmt, map[string]string)
-		walkStatements = func(statements []ast.Stmt, env map[string]string) {
+		var walkStatements func([]ast.Stmt, map[string]applicationRouteScope)
+		walkStatements = func(statements []ast.Stmt, env map[string]applicationRouteScope) {
 			for _, stmt := range statements {
 				if conditional, ok := stmt.(*ast.IfStmt); ok {
-					ifEnv := cloneMap(env)
+					ifEnv := cloneApplicationRouteScopes(env)
 					if assign, ok := conditional.Init.(*ast.AssignStmt); ok {
 						g.captureGroup(assign, ifEnv)
 					}
 					walkStatements(conditional.Body.List, ifEnv)
 					switch alternative := conditional.Else.(type) {
 					case *ast.BlockStmt:
-						walkStatements(alternative.List, cloneMap(env))
+						walkStatements(alternative.List, cloneApplicationRouteScopes(env))
 					case *ast.IfStmt:
-						walkStatements([]ast.Stmt{alternative}, cloneMap(env))
+						walkStatements([]ast.Stmt{alternative}, cloneApplicationRouteScopes(env))
 					}
 					continue
 				}
@@ -588,12 +593,12 @@ func (g *generator) collectRoutes() []route {
 				}
 				if fnName := calledFuncName(call.Fun); strings.HasPrefix(fnName, "register") {
 					if len(call.Args) > 0 {
-						if id, ok := call.Args[0].(*ast.Ident); ok {
-							next := map[string]string{}
+						if scope, ok := applicationRouteScopeForExpr(call.Args[0], env); ok {
+							next := map[string]applicationRouteScope{}
 							if paramName := firstParamName(funcs[fnName]); paramName != "" {
-								next[paramName] = env[id.Name]
+								next[paramName] = scope
 							}
-							walkFunc(fnName, next, admin)
+							walkFunc(fnName, next)
 						}
 					}
 					continue
@@ -607,7 +612,7 @@ func (g *generator) collectRoutes() []route {
 				if !isHTTPRegistration(method) {
 					continue
 				}
-				recv, ok := selector.X.(*ast.Ident)
+				scope, ok := applicationRouteScopeForExpr(selector.X, env)
 				if !ok {
 					continue
 				}
@@ -618,18 +623,18 @@ func (g *generator) collectRoutes() []route {
 				if method == "ANY" {
 					method = "POST"
 				}
-				fullPath := cleanPath(env[recv.Name] + path)
+				fullPath := cleanPath(scope.Prefix + path)
 				handler := handlerName(call.Args[1])
 				displayName := routeDisplayName(handler, g.routeCommentValue(stmt, "name"), fullPath)
 				folder := g.routeCommentValue(stmt, "folder")
 				keyPath := fullPath
-				if admin {
+				if scope.Admin {
 					keyPath = adminCanonicalPath(fullPath)
 				}
 				key := method + " " + keyPath + " " + handler
 				if !seen[key] {
 					seen[key] = true
-					out = append(out, route{Method: method, Path: fullPath, Handler: handler, DisplayName: displayName, Description: g.handlerDescription(handler), Folder: folder, Admin: admin})
+					out = append(out, route{Method: method, Path: fullPath, Handler: handler, DisplayName: displayName, Description: g.handlerDescription(handler), Folder: folder, Admin: scope.Admin})
 				}
 			}
 		}
@@ -637,11 +642,20 @@ func (g *generator) collectRoutes() []route {
 		walkStatements(fn.Body.List, env)
 	}
 
-	walkFunc("registerPublicRoutes", map[string]string{
-		"e": "", "api": "/v1", "authenticated": "/v1",
-	}, false)
-	walkFunc("registerAdminRoutes", map[string]string{"e": ""}, true)
-	walkFunc("registerUploadRoutes", map[string]string{"e": ""}, false)
+	if registerRoutes := funcs["registerRoutes"]; registerRoutes != nil {
+		paramName := firstParamName(registerRoutes)
+		if paramName != "" {
+			walkFunc("registerRoutes", map[string]applicationRouteScope{
+				paramName: {RuntimeRoutes: true},
+			})
+		}
+	} else {
+		walkFunc("registerPublicRoutes", map[string]applicationRouteScope{
+			"e": {Prefix: ""}, "api": {Prefix: "/v1"}, "authenticated": {Prefix: "/v1"},
+		})
+		walkFunc("registerAdminRoutes", map[string]applicationRouteScope{"e": {Admin: true}})
+		walkFunc("registerUploadRoutes", map[string]applicationRouteScope{"e": {Prefix: ""}})
+	}
 
 	sort.Slice(out, func(i, j int) bool {
 		if out[i].Path == out[j].Path {
@@ -894,11 +908,19 @@ func collectRoutesFromPlugin(root, moduleName string) ([]route, error) {
 			ast.Inspect(function.Body, func(node ast.Node) bool {
 				switch value := node.(type) {
 				case *ast.AssignStmt:
-					capturePluginGroup(value, parameter, groups)
+					capturePluginGroups(value, parameter, groups)
 				case *ast.CallExpr:
 					pluginRoute, ok := pluginRouteFromCall(value, parameter, groups, moduleName)
 					if !ok {
 						return true
+					}
+					pluginRoute.DisplayName = routeDisplayName(
+						pluginRoute.Handler,
+						routeCommentValue(fset, file, value, "name"),
+						pluginRoute.Path,
+					)
+					if folder := routeCommentValue(fset, file, value, "folder"); folder != "" {
+						pluginRoute.Folder = folder
 					}
 					key := pluginRoute.Method + " " + pluginRoute.Path
 					if !seen[key] {
@@ -949,32 +971,38 @@ func collectHandlerDescriptions(root string) (map[string]string, error) {
 	return descriptions, err
 }
 
-func capturePluginGroup(assign *ast.AssignStmt, routesParameter string, groups map[string]pluginRouteGroup) {
-	if len(assign.Lhs) != 1 || len(assign.Rhs) != 1 {
+func capturePluginGroups(assign *ast.AssignStmt, routesParameter string, groups map[string]pluginRouteGroup) {
+	if len(assign.Lhs) != len(assign.Rhs) {
 		return
 	}
-	name, ok := assign.Lhs[0].(*ast.Ident)
-	if !ok {
-		return
+	for index, lhs := range assign.Lhs {
+		name, ok := lhs.(*ast.Ident)
+		if !ok || name.Name == "_" {
+			continue
+		}
+		if group, ok := resolvePluginGroup(assign.Rhs[index], routesParameter, groups); ok {
+			groups[name.Name] = group
+			continue
+		}
+		call, ok := assign.Rhs[index].(*ast.CallExpr)
+		if !ok || len(call.Args) == 0 {
+			continue
+		}
+		selector, ok := call.Fun.(*ast.SelectorExpr)
+		if !ok || selector.Sel.Name != "Group" {
+			continue
+		}
+		parent, ok := resolvePluginGroup(selector.X, routesParameter, groups)
+		if !ok {
+			continue
+		}
+		path, ok := stringLiteral(call.Args[0])
+		if !ok {
+			continue
+		}
+		parent.Path = cleanPath(parent.Path + path)
+		groups[name.Name] = parent
 	}
-	call, ok := assign.Rhs[0].(*ast.CallExpr)
-	if !ok || len(call.Args) == 0 {
-		return
-	}
-	selector, ok := call.Fun.(*ast.SelectorExpr)
-	if !ok || selector.Sel.Name != "Group" {
-		return
-	}
-	parent, ok := resolvePluginGroup(selector.X, routesParameter, groups)
-	if !ok {
-		return
-	}
-	path, ok := stringLiteral(call.Args[0])
-	if !ok {
-		return
-	}
-	parent.Path = cleanPath(parent.Path + path)
-	groups[name.Name] = parent
 }
 
 func pluginRouteFromCall(call *ast.CallExpr, routesParameter string, groups map[string]pluginRouteGroup, moduleName string) (route, bool) {
@@ -1003,7 +1031,6 @@ func pluginRouteFromCall(call *ast.CallExpr, routesParameter string, groups map[
 		Method: method, Path: fullPath, Handler: handler,
 		DisplayName: routeDisplayName(handler, "", fullPath),
 		Folder:      titleForSegment(moduleName),
-		Admin:       group.AuthMode == routeAuthAdmin,
 		AuthMode:    group.AuthMode,
 	}, true
 }
@@ -1027,7 +1054,10 @@ func resolvePluginGroup(expression ast.Expr, routesParameter string, groups map[
 	case "Authenticated":
 		return pluginRouteGroup{Path: "/v1", AuthMode: routeAuthBearer}, true
 	case "Admin":
-		return pluginRouteGroup{Path: "/v1/admin", AuthMode: routeAuthAdmin}, true
+		// Plugin admin routes are session/RBAC-protected routes on the public
+		// server. The separate adminURL/admin-key server is exposed to the
+		// application as runtime.Routes.Operations, not to plugins.
+		return pluginRouteGroup{Path: "/v1/admin", AuthMode: routeAuthBearer}, true
 	default:
 		return pluginRouteGroup{}, false
 	}
@@ -1059,7 +1089,7 @@ func sortRoutes(routes []route) {
 	})
 }
 
-func (g *generator) captureGroup(assign *ast.AssignStmt, env map[string]string) {
+func (g *generator) captureGroup(assign *ast.AssignStmt, env map[string]applicationRouteScope) {
 	if len(assign.Lhs) != 1 || len(assign.Rhs) != 1 {
 		return
 	}
@@ -1067,6 +1097,11 @@ func (g *generator) captureGroup(assign *ast.AssignStmt, env map[string]string) 
 	if !ok {
 		return
 	}
+	if scope, ok := applicationRouteScopeForExpr(assign.Rhs[0], env); ok {
+		env[left.Name] = scope
+		return
+	}
+
 	call, ok := assign.Rhs[0].(*ast.CallExpr)
 	if !ok || len(call.Args) == 0 {
 		return
@@ -1075,7 +1110,7 @@ func (g *generator) captureGroup(assign *ast.AssignStmt, env map[string]string) 
 	if !ok || sel.Sel.Name != "Group" {
 		return
 	}
-	recv, ok := sel.X.(*ast.Ident)
+	scope, ok := applicationRouteScopeForExpr(sel.X, env)
 	if !ok {
 		return
 	}
@@ -1083,7 +1118,39 @@ func (g *generator) captureGroup(assign *ast.AssignStmt, env map[string]string) 
 	if !ok {
 		return
 	}
-	env[left.Name] = cleanPath(env[recv.Name] + path)
+	scope.Prefix = cleanPath(scope.Prefix + path)
+	env[left.Name] = scope
+}
+
+func applicationRouteScopeForExpr(expr ast.Expr, env map[string]applicationRouteScope) (applicationRouteScope, bool) {
+	switch typed := expr.(type) {
+	case *ast.Ident:
+		scope, ok := env[typed.Name]
+		return scope, ok
+	case *ast.SelectorExpr:
+		parent, ok := applicationRouteScopeForExpr(typed.X, env)
+		if !ok || !parent.RuntimeRoutes {
+			return applicationRouteScope{}, false
+		}
+		switch typed.Sel.Name {
+		case "Public":
+			return applicationRouteScope{}, true
+		case "API", "Authenticated":
+			return applicationRouteScope{Prefix: "/v1"}, true
+		case "Admin":
+			return applicationRouteScope{Prefix: "/v1/admin"}, true
+		case "Upload":
+			return applicationRouteScope{Prefix: "/upload"}, true
+		case "UploadRoot":
+			return applicationRouteScope{}, true
+		case "Operations":
+			return applicationRouteScope{Admin: true}, true
+		default:
+			return applicationRouteScope{}, false
+		}
+	default:
+		return applicationRouteScope{}, false
+	}
 }
 
 func (g *generator) collection(name string, routes []route, vars collectionVars) postmanCollection {
@@ -2275,8 +2342,15 @@ func routePathDisplayName(path string) string {
 }
 
 func (g *generator) routeCommentValue(stmt ast.Stmt, key string) string {
-	pos := stmt.End()
-	for _, group := range g.routesFile.Comments {
+	return routeCommentValue(g.fset, g.routesFile, stmt, key)
+}
+
+func routeCommentValue(fset *token.FileSet, file *ast.File, node ast.Node, key string) string {
+	if fset == nil || file == nil || node == nil {
+		return ""
+	}
+	pos := node.End()
+	for _, group := range file.Comments {
 		if group == nil {
 			continue
 		}
@@ -2284,8 +2358,8 @@ func (g *generator) routeCommentValue(stmt ast.Stmt, key string) string {
 		if groupPos < pos {
 			continue
 		}
-		stmtEnd := g.fset.Position(pos)
-		commentStart := g.fset.Position(groupPos)
+		stmtEnd := fset.Position(pos)
+		commentStart := fset.Position(groupPos)
 		if stmtEnd.Filename != commentStart.Filename || stmtEnd.Line != commentStart.Line {
 			continue
 		}
@@ -2430,8 +2504,8 @@ func lowerFirst(s string) string {
 	return strings.ToLower(s[:1]) + s[1:]
 }
 
-func cloneMap(in map[string]string) map[string]string {
-	out := map[string]string{}
+func cloneApplicationRouteScopes(in map[string]applicationRouteScope) map[string]applicationRouteScope {
+	out := map[string]applicationRouteScope{}
 	for k, v := range in {
 		out[k] = v
 	}
