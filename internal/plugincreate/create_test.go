@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/bartek5186/procyon-cli/internal/buildinfo"
 )
 
 func TestCreateMinimalPlugin(t *testing.T) {
@@ -141,23 +143,10 @@ func TestGeneratedCompletePluginCompiles(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "catalog")
 	_, err := Create(Options{
 		Name: "catalog", GoModule: "github.com/acme/catalog", OutputDir: root,
-		CoreVersion: "v0.6.0", CLIVersion: "0.7.0",
+		CoreVersion: buildinfo.CoreVersion, CLIVersion: buildinfo.CLIVersion,
 	})
 	if err != nil {
 		t.Fatal(err)
-	}
-
-	corePath, err := filepath.Abs(filepath.Join("..", "..", "..", "procyon-core"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := os.Stat(filepath.Join(corePath, "go.mod")); err == nil {
-		command := exec.Command("go", "mod", "edit", "-replace=github.com/bartek5186/procyon-core="+corePath)
-		command.Dir = root
-		command.Env = append(os.Environ(), "GOWORK=off")
-		if output, err := command.CombinedOutput(); err != nil {
-			t.Fatalf("replace local core: %v\n%s", err, output)
-		}
 	}
 	if err := Prepare(root); err != nil {
 		t.Fatal(err)
