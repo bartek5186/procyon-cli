@@ -543,6 +543,7 @@ type applicationRouteScope struct {
 	Prefix        string
 	Admin         bool
 	RuntimeRoutes bool
+	AuthMode      string
 }
 
 func (g *generator) collectRoutes() []route {
@@ -634,7 +635,7 @@ func (g *generator) collectRoutes() []route {
 				key := method + " " + keyPath + " " + handler
 				if !seen[key] {
 					seen[key] = true
-					out = append(out, route{Method: method, Path: fullPath, Handler: handler, DisplayName: displayName, Description: g.handlerDescription(handler), Folder: folder, Admin: scope.Admin})
+					out = append(out, route{Method: method, Path: fullPath, Handler: handler, DisplayName: displayName, Description: g.handlerDescription(handler), Folder: folder, Admin: scope.Admin, AuthMode: scope.AuthMode})
 				}
 			}
 		}
@@ -651,7 +652,7 @@ func (g *generator) collectRoutes() []route {
 		}
 	} else {
 		walkFunc("registerPublicRoutes", map[string]applicationRouteScope{
-			"e": {Prefix: ""}, "api": {Prefix: "/v1"}, "authenticated": {Prefix: "/v1"},
+			"e": {Prefix: "", AuthMode: routeAuthPublic}, "api": {Prefix: "/v1", AuthMode: routeAuthPublic}, "authenticated": {Prefix: "/v1", AuthMode: routeAuthBearer},
 		})
 		walkFunc("registerAdminRoutes", map[string]applicationRouteScope{"e": {Admin: true}})
 		walkFunc("registerUploadRoutes", map[string]applicationRouteScope{"e": {Prefix: ""}})
@@ -747,9 +748,6 @@ func (g *generator) collectPluginRoutes() ([]route, error) {
 			continue
 		}
 		name := entry.Name()
-		if _, duplicate := seenNames[name]; duplicate {
-			return nil, fmt.Errorf("plugin %s exists as both local and installed", name)
-		}
 		source := filepath.Join(localRoot, name)
 		absoluteSource, err := filepath.Abs(source)
 		if err != nil {
@@ -757,6 +755,9 @@ func (g *generator) collectPluginRoutes() ([]route, error) {
 		}
 		if _, installed := installedSources[filepath.Clean(absoluteSource)]; installed {
 			continue
+		}
+		if _, duplicate := seenNames[name]; duplicate {
+			return nil, fmt.Errorf("plugin %s exists as both local and installed", name)
 		}
 		if _, err := os.Stat(filepath.Join(source, "plugin.go")); os.IsNotExist(err) {
 			continue
@@ -1134,7 +1135,27 @@ func (g *generator) captureGroup(assign *ast.AssignStmt, env map[string]applicat
 		return
 	}
 	scope.Prefix = cleanPath(scope.Prefix + path)
+	for _, middleware := range call.Args[1:] {
+		if applicationMiddlewareRequiresAuth(middleware) {
+			scope.AuthMode = routeAuthBearer
+			break
+		}
+	}
 	env[left.Name] = scope
+}
+
+func applicationMiddlewareRequiresAuth(expr ast.Expr) bool {
+	var name string
+	switch typed := expr.(type) {
+	case *ast.Ident:
+		name = typed.Name
+	case *ast.SelectorExpr:
+		name = typed.Sel.Name
+	case *ast.CallExpr:
+		return applicationMiddlewareRequiresAuth(typed.Fun)
+	}
+	name = strings.ToLower(name)
+	return strings.Contains(name, "auth") || strings.HasPrefix(name, "require")
 }
 
 func applicationRouteScopeForExpr(expr ast.Expr, env map[string]applicationRouteScope) (applicationRouteScope, bool) {
@@ -1149,15 +1170,17 @@ func applicationRouteScopeForExpr(expr ast.Expr, env map[string]applicationRoute
 		}
 		switch typed.Sel.Name {
 		case "Public":
-			return applicationRouteScope{}, true
-		case "API", "Authenticated":
-			return applicationRouteScope{Prefix: "/v1"}, true
+			return applicationRouteScope{AuthMode: routeAuthPublic}, true
+		case "API":
+			return applicationRouteScope{Prefix: "/v1", AuthMode: routeAuthPublic}, true
+		case "Authenticated":
+			return applicationRouteScope{Prefix: "/v1", AuthMode: routeAuthBearer}, true
 		case "Admin":
-			return applicationRouteScope{Prefix: "/v1/admin"}, true
+			return applicationRouteScope{Prefix: "/v1/admin", AuthMode: routeAuthBearer}, true
 		case "Upload":
-			return applicationRouteScope{Prefix: "/upload"}, true
+			return applicationRouteScope{Prefix: "/upload", AuthMode: routeAuthBearer}, true
 		case "UploadRoot":
-			return applicationRouteScope{}, true
+			return applicationRouteScope{AuthMode: routeAuthBearer}, true
 		case "Operations":
 			return applicationRouteScope{Admin: true}, true
 		default:
@@ -1420,10 +1443,22 @@ func applyManualRequestExample(req *postmanRequest, example manualExampleRequest
 		return
 	}
 	if len(example.Query) > 0 {
+		present := make(map[string]bool, len(req.URL.Query))
 		for i := range req.URL.Query {
+			present[req.URL.Query[i].Key] = true
 			if value, ok := example.Query[req.URL.Query[i].Key]; ok {
 				req.URL.Query[i].Value = value
 			}
+		}
+		missing := make([]string, 0, len(example.Query))
+		for key := range example.Query {
+			if !present[key] {
+				missing = append(missing, key)
+			}
+		}
+		sort.Strings(missing)
+		for _, key := range missing {
+			req.URL.Query = append(req.URL.Query, postmanQueryParam{Key: key, Value: example.Query[key]})
 		}
 		req.URL.Raw = rawURLFromParts(req.URL.Host, req.URL.Path, req.URL.Query)
 	}

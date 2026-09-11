@@ -137,6 +137,26 @@ func TestManualExampleAppliesHeaders(t *testing.T) {
 	}
 }
 
+func TestManualExampleAddsMissingQueryParameters(t *testing.T) {
+	req := &postmanRequest{
+		Method: "GET",
+		URL: postmanURL{
+			Host: []string{"{{adminURL}}"},
+			Path: []string{"leagues"},
+		},
+	}
+	applyManualRequestExample(req, manualExampleRequest{Query: map[string]string{
+		"order": "desc",
+		"level": "8",
+	}})
+	if len(req.URL.Query) != 2 || req.URL.Query[0].Key != "level" || req.URL.Query[0].Value != "8" || req.URL.Query[1].Key != "order" {
+		t.Fatalf("query = %+v", req.URL.Query)
+	}
+	if req.URL.Raw != "{{adminURL}}/leagues?level=8&order=desc" {
+		t.Fatalf("raw URL = %q", req.URL.Raw)
+	}
+}
+
 func TestManualExamplesMatchConcretePluginRouteParameters(t *testing.T) {
 	generator := &generator{manualExamples: map[string][]manualExample{
 		"POST /v1/payments/verify/google": {{Name: "Google"}},
@@ -447,6 +467,12 @@ func (app *application) registerRoutes(routes Routes) error {
 }
 func registerPublicRoutes(e *Echo, app *application) {
 	e.GET("/status", app.Status)
+	e.GET("/v1/player/:playerID/avatar", app.GetPlayerAvatar)
+	securedPayment := e.Group("/payment", authenticate)
+	registerAuthenticatedPaymentRoutes(securedPayment, app)
+}
+func registerAuthenticatedPaymentRoutes(g *Group, app *application) {
+	g.GET("/status", app.PaymentStatus)
 }
 func registerAuthenticatedRoutes(g *Group, app *application) {
 	g.GET("/profile", app.Profile) // folder: Players, name: MyProfile
@@ -470,15 +496,26 @@ func registerUploadRoutes(g *Group, app *application) {
 		t.Fatal(err)
 	}
 	routes := generator.collectRoutes()
-	if len(routes) != 4 {
-		t.Fatalf("routes = %d, want 4: %+v", len(routes), routes)
+	if len(routes) != 6 {
+		t.Fatalf("routes = %d, want 6: %+v", len(routes), routes)
 	}
 	assertGeneratedRoute(t, routes, "GET", "/status", "Status")
+	assertGeneratedRoute(t, routes, "GET", "/v1/player/:playerID/avatar", "GetPlayerAvatar")
+	assertGeneratedRoute(t, routes, "GET", "/payment/status", "PaymentStatus")
 	assertGeneratedRoute(t, routes, "GET", "/v1/profile", "MyProfile")
 	assertGeneratedRoute(t, routes, "GET", "/jobs", "Jobs")
 	assertGeneratedRoute(t, routes, "POST", "/v1/upload", "Upload")
 
 	for _, item := range routes {
+		if item.Path == "/v1/player/:playerID/avatar" && item.AuthMode != routeAuthPublic {
+			t.Fatalf("public v1 route auth = %q, want %q", item.AuthMode, routeAuthPublic)
+		}
+		if item.Path == "/v1/profile" && item.AuthMode != routeAuthBearer {
+			t.Fatalf("authenticated route auth = %q, want %q", item.AuthMode, routeAuthBearer)
+		}
+		if item.Path == "/payment/status" && item.AuthMode != routeAuthBearer {
+			t.Fatalf("secured public subgroup auth = %q, want %q", item.AuthMode, routeAuthBearer)
+		}
 		if item.Path == "/v1/profile" && item.Folder != "Players" {
 			t.Fatalf("profile folder = %q, want Players", item.Folder)
 		}
