@@ -80,6 +80,56 @@ folder in `docs/postman/overview.md`. The generator places it in the folder's
 **Overview** tab. Without that file it falls back to the plugin `description`
 from `procyon-module.json`.
 
+### Manual examples (CLI 0.8.0)
+
+Files in `docs/postman/*.json` contain an `examples` array. Each example uses
+`key: "METHOD /registered/path"`; set `default: true` on the variant used as the
+main request. Static routes own their examples: `/materials/ranking` is not an
+example of `/materials/:id`. Concrete parameter values such as `/materials/42`
+still work and populate the generated path variable.
+
+An explicit `request` object is a **complete request example**: only its `query`,
+`headers` and `body` are included. `request: {}` produces an empty request with
+path placeholders; omitting `request` retains controller-inferred defaults.
+Route authentication and documentation remain in both cases. Each response's
+`originalRequest` is generated independently, so the default variant cannot leak
+filters, headers, body or path values into another example. This changes the
+0.7.x overlay behavior: include all desired query parameters, headers and body
+when providing `request`.
+
+Response `headers` are preserved even without a body. Response `body` is JSON by
+default (including JSON strings); a string with an explicit non-JSON
+`Content-Type` is emitted as raw text, for example an HLS playlist. `HEAD`, 1xx,
+204, 205 and 304 responses have no body. HTTP status descriptions use standard
+status names, including redirects and precondition errors.
+
+```json
+{
+  "examples": [{
+    "key": "GET /v1/materials/:id/stream/*",
+    "name": "HLS playlist",
+    "default": true,
+    "request": {
+      "path": {"id": "12", "*": "pl/master.m3u8"}
+    },
+    "response": {
+      "status": 200,
+      "headers": {
+        "Content-Type": "application/vnd.apple.mpegurl",
+        "Cache-Control": "private, no-store",
+        "ETag": "playlist-v1"
+      },
+      "body": "#EXTM3U\n#EXT-X-VERSION:3\n"
+    }
+  }]
+}
+```
+
+Echo's `*` is exported as a Postman `:wildcardPath` variable (with a numeric suffix
+if that name is already used). Set its value using `request.path["*"]` as above.
+Registered `HEAD` endpoints are included for both applications and plugins.
+`postman generate` and `postman sync` use the same generator and example rules.
+
 Synchronize the generated collection with every configured Postman target:
 
 ```bash

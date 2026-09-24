@@ -7,6 +7,7 @@ import (
 	"go/parser"
 	"go/token"
 	"io/fs"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -129,6 +130,7 @@ type generator struct {
 	handlerBody map[string]any
 	funcReturns map[string][]ast.Expr
 
+	routes         []route
 	manualExamples map[string][]manualExample
 	folderDocs     map[string]string
 }
@@ -144,7 +146,7 @@ type manualExample struct {
 	Key      string                `json:"key"`
 	Name     string                `json:"name,omitempty"`
 	Default  bool                  `json:"default,omitempty"`
-	Request  manualExampleRequest  `json:"request,omitempty"`
+	Request  *manualExampleRequest `json:"request,omitempty"`
 	Response manualExampleResponse `json:"response,omitempty"`
 }
 
@@ -156,8 +158,9 @@ type manualExampleRequest struct {
 }
 
 type manualExampleResponse struct {
-	Status int             `json:"status,omitempty"`
-	Body   json.RawMessage `json:"body,omitempty"`
+	Status  int               `json:"status,omitempty"`
+	Headers map[string]string `json:"headers,omitempty"`
+	Body    json.RawMessage   `json:"body,omitempty"`
 }
 
 type generatorConfig struct {
@@ -1192,6 +1195,7 @@ func applicationRouteScopeForExpr(expr ast.Expr, env map[string]applicationRoute
 }
 
 func (g *generator) collection(name string, routes []route, vars collectionVars) postmanCollection {
+	g.routes = routes
 	folders := map[string]*postmanItem{}
 	for _, r := range routes {
 		folderPath := modulePath(r)
@@ -1406,8 +1410,9 @@ func (g *generator) routeItem(r route) postmanItem {
 	}
 
 	query := g.queryParamsForHandler(r.Handler)
-	variables := pathVariables(r.Path)
-	rawURL := "{{" + baseVar + "}}" + r.Path + queryString(query)
+	requestPath := postmanRoutePath(r.Path)
+	variables := pathVariables(requestPath)
+	rawURL := "{{" + baseVar + "}}" + requestPath + queryString(query)
 
 	req := &postmanRequest{
 		Method:      r.Method,
@@ -1415,7 +1420,7 @@ func (g *generator) routeItem(r route) postmanItem {
 		URL: postmanURL{
 			Raw:      rawURL,
 			Host:     []string{"{{" + baseVar + "}}"},
-			Path:     pathParts(r.Path),
+			Path:     pathParts(requestPath),
 			Query:    query,
 			Variable: variables,
 		},
@@ -1425,17 +1430,79 @@ func (g *generator) routeItem(r route) postmanItem {
 		req.Header = []postmanHeader{{Key: "Content-Type", Value: "application/json", Type: "text"}}
 		req.Body = &postmanBody{Mode: "raw", Raw: string(raw)}
 	}
-	if examples := g.manualExamplesForRoute(r); len(examples) > 0 {
-		applyManualRequestExample(req, examples[0].Request)
-	}
 	if routeRequiresBearerAuth(r) {
-		auth := bearerAuth()
-		req.Auth = auth
-		item := postmanItem{Name: r.DisplayName, Auth: auth, Request: req, Response: g.responseExamples(r, req)}
-		return item
+		req.Auth = bearerAuth()
 	}
-	item := postmanItem{Name: r.DisplayName, Request: req, Response: g.responseExamples(r, req)}
-	return item
+	// Every response starts from the inferred request, never the default variant.
+	responses := g.responseExamples(r, req)
+	if examples := g.manualExamplesForRoute(r); len(examples) > 0 {
+		req = requestForManualExample(r, req, examples[0])
+	}
+	return postmanItem{Name: r.DisplayName, Auth: req.Auth, Request: req, Response: responses}
+}
+
+func requestForManualExample(r route, base *postmanRequest, example manualExample) *postmanRequest {
+	req := clonePostmanRequest(base)
+	if example.Request != nil {
+		// An explicit request is complete. Omitted request keeps inferred defaults.
+		req.Header = nil
+		req.Body = nil
+		req.URL.Query = nil
+	}
+	// Concrete example keys also provide path values, e.g. /verify/google.
+	_, examplePath, _ := strings.Cut(example.Key, " ")
+	routeParts, exampleParts := pathParts(r.Path), pathParts(examplePath)
+	values := map[string]string{}
+	if len(routeParts) == len(exampleParts) {
+		for i, part := range routeParts {
+			if strings.HasPrefix(part, ":") && !strings.HasPrefix(exampleParts[i], ":") {
+				values[strings.TrimPrefix(part, ":")] = exampleParts[i]
+			}
+		}
+	}
+	applyManualRequestExample(req, manualExampleRequest{Path: values})
+	if example.Request != nil {
+		request := *example.Request
+		request.Path = make(map[string]string, len(example.Request.Path))
+		for key, value := range example.Request.Path {
+			if key == "*" {
+				key = wildcardVariableName(r.Path)
+			}
+			request.Path[key] = value
+		}
+		applyManualRequestExample(req, request)
+	}
+	req.URL.Raw = rawURLFromParts(req.URL.Host, req.URL.Path, req.URL.Query)
+	return req
+}
+
+// Echo's wildcard becomes an editable Postman path variable. Avoid clashing
+// with an existing named parameter on the same route.
+func wildcardVariableName(path string) string {
+	name := "wildcardPath"
+	for suffix := 2; ; suffix++ {
+		found := false
+		for _, part := range pathParts(path) {
+			if part == ":"+name {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return name
+		}
+		name = "wildcardPath" + strconv.Itoa(suffix)
+	}
+}
+
+func postmanRoutePath(path string) string {
+	parts := pathParts(path)
+	for i, part := range parts {
+		if part == "*" {
+			parts[i] = ":" + wildcardVariableName(path)
+		}
+	}
+	return "/" + strings.Join(parts, "/")
 }
 
 func applyManualRequestExample(req *postmanRequest, example manualExampleRequest) {
@@ -1469,7 +1536,8 @@ func applyManualRequestExample(req *postmanRequest, example manualExampleRequest
 			}
 		}
 	}
-	for key, value := range example.Headers {
+	for _, header := range sortedHeaders(example.Headers) {
+		key, value := header.Key, header.Value
 		found := false
 		for i := range req.Header {
 			if strings.EqualFold(req.Header[i].Key, key) {
@@ -1490,6 +1558,7 @@ func applyManualRequestExample(req *postmanRequest, example manualExampleRequest
 			req.Body = &postmanBody{Mode: "raw", Raw: string(raw)}
 		}
 	}
+	sort.Slice(req.Header, func(i, j int) bool { return req.Header[i].Key < req.Header[j].Key })
 }
 
 func rawURLFromParts(host []string, path []string, query []postmanQueryParam) string {
@@ -1517,7 +1586,12 @@ func upsertContentTypeJSON(headers []postmanHeader) []postmanHeader {
 func (g *generator) manualExamplesForRoute(r route) []manualExample {
 	exactKey := r.Method + " " + cleanPath(r.Path)
 	examples := append([]manualExample(nil), g.manualExamples[exactKey]...)
-	for key, candidates := range g.manualExamples {
+	keys := make([]string, 0, len(g.manualExamples))
+	for key := range g.manualExamples {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
 		if key == exactKey {
 			continue
 		}
@@ -1525,7 +1599,18 @@ func (g *generator) manualExamplesForRoute(r route) []manualExample {
 		if !found || method != r.Method || !routeExamplePathMatches(r.Path, path) {
 			continue
 		}
-		examples = append(examples, candidates...)
+		// A static or more specific registered route owns its examples.
+		claimed := false
+		for _, other := range g.routes {
+			if other.Method == method && routeExamplePathMatches(other.Path, path) &&
+				(cleanPath(other.Path) == path || routeMoreSpecific(other.Path, r.Path)) {
+				claimed = true
+				break
+			}
+		}
+		if !claimed {
+			examples = append(examples, g.manualExamples[key]...)
+		}
 	}
 	sort.SliceStable(examples, func(i, j int) bool {
 		if examples[i].Default != examples[j].Default {
@@ -1534,6 +1619,23 @@ func (g *generator) manualExamplesForRoute(r route) []manualExample {
 		return examples[i].Name < examples[j].Name
 	})
 	return examples
+}
+
+// Echo gives literal segments precedence over parameters at the first
+// differing segment, not by total literal count.
+func routeMoreSpecific(candidate, current string) bool {
+	left, right := pathParts(candidate), pathParts(current)
+	if len(left) != len(right) {
+		return false
+	}
+	for i := range left {
+		leftParam := strings.HasPrefix(left[i], ":")
+		rightParam := strings.HasPrefix(right[i], ":")
+		if leftParam != rightParam {
+			return !leftParam
+		}
+	}
+	return false
 }
 
 func routeExamplePathMatches(routePath, examplePath string) bool {
@@ -1703,17 +1805,29 @@ func (g *generator) responseExamples(r route, req *postmanRequest) []postmanResp
 			}
 			response := postmanResponse{
 				Name:            manualResponseName(example, code, status),
-				OriginalRequest: clonePostmanRequest(req),
+				OriginalRequest: requestForManualExample(r, req, example),
+				Header:          sortedHeaders(example.Response.Headers),
 				Status:          status,
 				Code:            code,
 			}
-			applyManualRequestExample(response.OriginalRequest, example.Request)
-			if len(example.Response.Body) > 0 && string(example.Response.Body) != "null" {
+			if responseAllowsBody(r.Method, code) && len(example.Response.Body) > 0 && string(example.Response.Body) != "null" {
 				var body any
 				if err := json.Unmarshal(example.Response.Body, &body); err == nil {
-					raw, _ := json.MarshalIndent(body, "", "  ")
-					response.Header = []postmanHeader{{Key: "Content-Type", Value: "application/json", Type: "text"}}
-					response.Body = string(raw)
+					contentType := ""
+					for _, header := range response.Header {
+						if strings.EqualFold(header.Key, "Content-Type") {
+							contentType = strings.ToLower(strings.TrimSpace(strings.SplitN(header.Value, ";", 2)[0]))
+						}
+					}
+					if value, ok := body.(string); ok && contentType != "" && contentType != "application/json" && !strings.HasSuffix(contentType, "+json") {
+						response.Body = value
+					} else {
+						raw, _ := json.MarshalIndent(body, "", "  ")
+						response.Body = string(raw)
+					}
+					if contentType == "" {
+						response.Header = upsertContentTypeJSON(response.Header)
+					}
 				}
 			}
 			out = append(out, response)
@@ -1722,17 +1836,30 @@ func (g *generator) responseExamples(r route, req *postmanRequest) []postmanResp
 	}
 
 	status, code := successStatus(r.Method)
-	body := g.responseBodyExample(r)
-	raw, _ := json.MarshalIndent(body, "", "  ")
-	return []postmanResponse{
-		{
-			Name:   fmt.Sprintf("%d %s - example", code, status),
-			Status: status,
-			Code:   code,
-			Header: []postmanHeader{{Key: "Content-Type", Value: "application/json", Type: "text"}},
-			Body:   string(raw),
-		},
+	response := postmanResponse{
+		Name:   fmt.Sprintf("%d %s - example", code, status),
+		Status: status,
+		Code:   code,
 	}
+	if responseAllowsBody(r.Method, code) {
+		raw, _ := json.MarshalIndent(g.responseBodyExample(r), "", "  ")
+		response.Header = []postmanHeader{{Key: "Content-Type", Value: "application/json", Type: "text"}}
+		response.Body = string(raw)
+	}
+	return []postmanResponse{response}
+}
+
+func responseAllowsBody(method string, code int) bool {
+	return method != "HEAD" && code >= 200 && code != 204 && code != 205 && code != 304
+}
+
+func sortedHeaders(headers map[string]string) []postmanHeader {
+	var out []postmanHeader
+	for key, value := range headers {
+		out = append(out, postmanHeader{Key: key, Value: value, Type: "text"})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Key < out[j].Key })
+	return out
 }
 
 func manualResponseName(example manualExample, code int, status string) string {
@@ -1743,32 +1870,10 @@ func manualResponseName(example manualExample, code int, status string) string {
 }
 
 func statusTextForCode(code int) string {
-	switch code {
-	case 200:
-		return "OK"
-	case 201:
-		return "Created"
-	case 202:
-		return "Accepted"
-	case 204:
-		return "No Content"
-	case 400:
-		return "Bad Request"
-	case 401:
-		return "Unauthorized"
-	case 403:
-		return "Forbidden"
-	case 404:
-		return "Not Found"
-	case 409:
-		return "Conflict"
-	case 422:
-		return "Unprocessable Entity"
-	case 500:
-		return "Internal Server Error"
-	default:
-		return "OK"
+	if status := http.StatusText(code); status != "" {
+		return status
 	}
+	return "Unknown Status"
 }
 
 func successStatus(method string) (string, int) {
@@ -2322,7 +2427,7 @@ func firstParamName(fn *ast.FuncDecl) string {
 
 func isHTTPRegistration(method string) bool {
 	switch method {
-	case "GET", "POST", "PUT", "PATCH", "DELETE", "ANY":
+	case "GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "ANY":
 		return true
 	default:
 		return false
